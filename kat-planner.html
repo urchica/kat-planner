@@ -201,6 +201,29 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 #level-indicator.lvl-3{background:#EEEDFE;border-color:var(--purple);color:#3C3489}
 #level-indicator.lvl-4{background:var(--red-light);border-color:var(--red);color:#A32D2D}
 
+/* Sprint */
+.sprint-header{background:linear-gradient(135deg,var(--teal) 0%,var(--teal-dark) 100%);color:white;border-radius:12px;padding:14px 16px;margin-bottom:10px}
+.sprint-hdr-title{font-size:17px;font-weight:700}
+.sprint-hdr-sub{font-size:12px;opacity:.8;margin-top:1px}
+.sprint-days{font-size:28px;font-weight:700;line-height:1}
+.sprint-days-lbl{font-size:11px;opacity:.75;margin-top:2px}
+.sprint-nav-btn{padding:5px 12px;border-radius:6px;border:none;background:rgba(255,255,255,.2);color:white;font-size:12px;font-weight:600;cursor:pointer}
+.goal-row{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--gray-light)}
+.goal-row:last-child{border-bottom:none}
+.goal-num{width:22px;height:22px;border-radius:50%;background:var(--teal);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.goal-name{font-size:13px;font-weight:600;line-height:1.3}
+.goal-target{font-size:11px;color:var(--gray);margin-top:2px}
+.project-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--gray-light)}
+.project-row:last-child{border-bottom:none}
+.project-name{font-size:13px;font-weight:600;flex:1}
+.sprint-task-row{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border-radius:8px;margin-bottom:4px;background:#FAFAF8;border:1px solid var(--gray-light)}
+.sprint-task-row.done{opacity:.5}
+.pull-btn{font-size:11px;padding:4px 9px;border-radius:6px;border:1.5px solid var(--teal);color:var(--teal);background:var(--white);cursor:pointer;font-weight:600;flex-shrink:0;white-space:nowrap;transition:.15s}
+.pull-btn.pulled{background:var(--teal-light);border-color:var(--teal-mid);color:var(--teal-dark);cursor:default}
+.section-toggle{cursor:pointer;user-select:none}
+.toggle-icon{font-size:12px;transition:.2s;display:inline-block}
+.toggle-icon.open{transform:rotate(180deg)}
+
 /* Utils */
 .flex{display:flex}.gap8{gap:8px}.items-center{align-items:center}.justify-between{justify-content:space-between}
 .text-sm{font-size:12px}.text-gray{color:var(--gray)}.font-bold{font-weight:700}
@@ -563,6 +586,85 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
       <button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="loadWeekData()">↻ Refresh week data</button>
     </div>
 
+    <!-- SPRINT TAB -->
+    <div class="tab-panel" id="panel-sprint">
+      <div id="sprint-header-area"></div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--teal)"></span>Outcome goals</span>
+          <button class="btn btn-ghost btn-sm" onclick="toggleAddGoal()">+ Add</button>
+        </div>
+        <div class="card-body" id="sprint-goals-body"><p class="text-sm text-gray">Loading…</p></div>
+        <div id="add-goal-form" style="display:none;padding:0 14px 12px">
+          <input class="form-input" id="new-goal-name" placeholder="Goal name…" style="width:100%;margin-bottom:6px"/>
+          <input class="form-input" id="new-goal-better" placeholder="Better target…" style="width:100%;margin-bottom:6px"/>
+          <button class="btn btn-primary btn-sm" onclick="addGoal()">Add goal</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--purple)"></span>Projects this sprint</span>
+          <button class="btn btn-ghost btn-sm" onclick="toggleAddProject()">+ Add</button>
+        </div>
+        <div class="card-body" id="sprint-projects-body"><p class="text-sm text-gray">Loading…</p></div>
+        <div id="add-project-form" style="display:none;padding:0 14px 12px">
+          <div class="flex gap8" style="flex-wrap:wrap">
+            <input class="form-input" id="new-project-name" placeholder="Project name…" style="flex:1;min-width:140px"/>
+            <select class="field-select" id="new-project-goal"><option value="">Goal (optional)…</option></select>
+            <button class="btn btn-primary btn-sm" onclick="addProject()">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--teal)"></span>My tasks — Kat</span>
+          <button class="btn btn-ghost btn-sm" onclick="toggleAddSprintTask('kat')">+ Add</button>
+        </div>
+        <div class="card-body" id="my-sprint-tasks-body"><p class="text-sm text-gray">Loading…</p></div>
+        <div id="add-sprint-task-kat" style="display:none;padding:0 14px 12px">
+          <div class="flex gap8" style="flex-wrap:wrap">
+            <input class="form-input" id="new-stask-name-kat" placeholder="Task name…" style="flex:1;min-width:140px"/>
+            <select class="field-select" id="new-stask-project-kat"><option value="">Project…</option></select>
+            <input class="field-num" id="new-stask-hrs-kat" type="number" placeholder="Hrs" min=".25" step=".25" style="width:60px"/>
+            <button class="btn btn-primary btn-sm" onclick="addSprintTask('Kat')">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--purple)"></span>Tim's tasks</span>
+          <button class="btn btn-ghost btn-sm" onclick="toggleAddSprintTask('tim')">+ Add</button>
+        </div>
+        <div class="card-body" id="tim-sprint-tasks-body"><p class="text-sm text-gray">Loading…</p></div>
+        <div id="add-sprint-task-tim" style="display:none;padding:0 14px 12px">
+          <div class="flex gap8" style="flex-wrap:wrap">
+            <input class="form-input" id="new-stask-name-tim" placeholder="Task name…" style="flex:1;min-width:140px"/>
+            <select class="field-select" id="new-stask-project-tim"><option value="">Project…</option></select>
+            <input class="field-num" id="new-stask-hrs-tim" type="number" placeholder="Hrs" min=".25" step=".25" style="width:60px"/>
+            <button class="btn btn-primary btn-sm" onclick="addSprintTask('Tim')">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header section-toggle" onclick="toggleSprintReview()">
+          <span class="card-title"><span class="dot" style="background:var(--amber)"></span>Sprint review</span>
+          <span class="toggle-icon" id="review-toggle-icon">▼</span>
+        </div>
+        <div id="sprint-review-body" style="display:none">
+          <div class="card-body">
+            <div id="sprint-review-form"></div>
+            <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="saveSprintReview()">Save sprint review</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- end sprint panel -->
+
   </div><!-- end content -->
 
   <!-- Bottom tabs -->
@@ -578,6 +680,9 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
     </div>
     <div class="tab" onclick="switchTab('week')" id="tab-week">
       <span class="tab-icon">📊</span>Week
+    </div>
+    <div class="tab" onclick="switchTab('sprint')" id="tab-sprint">
+      <span class="tab-icon">🎯</span>Sprint
     </div>
   </nav>
   <button class="global-mic-btn" id="global-mic-btn" onclick="toggleGlobalVoice()" title="Voice input">🎤</button>
@@ -681,6 +786,12 @@ let state = {
   dayFieldsVisible: false, allFieldsVisible: false, voiceActive: null, recognition: null
 };
 
+let sprintState = {
+  num: parseInt(localStorage.getItem('kat-sprint-num'))||1,
+  startDate: localStorage.getItem('kat-sprint-start')||null,
+  goals: [], projects: [], tasks: [], review: null
+};
+
 // ─── Airtable API ──────────────────────────────────────────────
 const AT = {
   async call(method, path, body=null) {
@@ -716,6 +827,31 @@ const AT = {
     return this.call('POST','Daily%20Logs',{records:[{fields:{Date:state.dayKey,...fields}}]});
   },
   async logSymptom(fields) { return this.call('POST','Symptoms',{records:[{fields}]}); },
+  async getSprintGoals() {
+    const r = await this.call('GET','Sprint%20Goals?sort[0][field]=Name');
+    return r.records||[];
+  },
+  async getSprintProjects(num) {
+    const r = await this.call('GET',`Sprint%20Projects?filterByFormula=${encodeURIComponent(`{Sprint}=${num}`)}`);
+    return r.records||[];
+  },
+  async getSprintTasks(num) {
+    const r = await this.call('GET',`Sprint%20Tasks?filterByFormula=${encodeURIComponent(`{Sprint}=${num}`)}&sort[0][field]=Owner`);
+    return r.records||[];
+  },
+  async getSprintReview(num) {
+    const r = await this.call('GET',`Sprint%20Reviews?filterByFormula=${encodeURIComponent(`{Sprint}=${num}`)}`);
+    return r.records?.[0]||null;
+  },
+  async createSprintGoal(fields) { return this.call('POST','Sprint%20Goals',{records:[{fields}]}); },
+  async createSprintProject(fields) { return this.call('POST','Sprint%20Projects',{records:[{fields}]}); },
+  async createSprintTask(fields) { return this.call('POST','Sprint%20Tasks',{records:[{fields}]}); },
+  async updateSprintTask(id,fields) { return this.call('PATCH','Sprint%20Tasks',{records:[{id,fields}]}); },
+  async saveSprintReview(sprintNum,fields) {
+    const ex = await this.getSprintReview(sprintNum);
+    if (ex) return this.call('PATCH','Sprint%20Reviews',{records:[{id:ex.id,fields}]});
+    return this.call('POST','Sprint%20Reviews',{records:[{fields}]});
+  },
   async getWeekLogs(fromDate) {
     const r = await this.call('GET',`Daily%20Logs?filterByFormula=${encodeURIComponent(`{Date}>='${fromDate}'`)}`);
     return r.records||[];
@@ -804,12 +940,13 @@ function restoreFromLog(fields) {
 
 // ─── Tabs ──────────────────────────────────────────────────────
 function switchTab(tab) {
-  ['day','tasks','log','week'].forEach(t => {
+  ['day','tasks','log','week','sprint'].forEach(t => {
     document.getElementById('panel-'+t).classList.toggle('active', t===tab);
     document.getElementById('tab-'+t).classList.toggle('active', t===tab);
   });
   if (tab==='tasks') renderAllTasks();
   if (tab==='week') loadWeekData();
+  if (tab==='sprint') loadSprintData();
 }
 
 // ─── Level & Matrix ────────────────────────────────────────────
@@ -1327,6 +1464,296 @@ function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 function toast(msg, dur=2500) {
   const el=document.getElementById('toast'); el.textContent=msg;
   el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),dur);
+}
+
+// ─── Sprint ────────────────────────────────────────────────────
+const SPRINT_REVIEW_FIELDS = [
+  ['What to stop doing','Stop'],['What to start doing','Start'],
+  ['What to continue doing','Continue'],['What to do more of','Do More'],
+  ['Goals feedback','Goals Notes'],['Projects feedback','Projects Notes'],
+  ['Key learnings','Key Learnings'],['What worked','What Worked'],
+  ["What didn't work","What Didn't"],['Next sprint focus','Next Sprint Focus']
+];
+const srId = f => 'sr-'+f.replace(/[\s']/g,'-');
+
+function saveSprintConfig() {
+  localStorage.setItem('kat-sprint-num', sprintState.num);
+  if (sprintState.startDate) localStorage.setItem('kat-sprint-start', sprintState.startDate);
+}
+
+function sprintEndDate() {
+  if (!sprintState.startDate) return null;
+  const d = new Date(sprintState.startDate+'T00:00');
+  d.setDate(d.getDate()+13);
+  return d;
+}
+
+async function loadSprintData() {
+  try {
+    const [goals, projects, tasks, review] = await Promise.all([
+      AT.getSprintGoals(),
+      AT.getSprintProjects(sprintState.num),
+      AT.getSprintTasks(sprintState.num),
+      AT.getSprintReview(sprintState.num)
+    ]);
+    sprintState.goals = goals;
+    sprintState.projects = projects;
+    sprintState.tasks = tasks;
+    sprintState.review = review;
+    renderSprintTab();
+  } catch(e) {
+    document.getElementById('sprint-header-area').innerHTML = renderSprintHeaderHTML();
+    const msg = (e.message||'').toLowerCase();
+    const isSetup = msg.includes('not found') || msg.includes('could not find');
+    const notice = isSetup
+      ? '<p class="text-sm text-gray">Create this Airtable table to enable this section.</p>'
+      : `<p class="text-sm text-gray" style="color:var(--red)">${esc(e.message)}</p>`;
+    ['sprint-goals-body','sprint-projects-body','my-sprint-tasks-body','tim-sprint-tasks-body'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.innerHTML = notice;
+    });
+  }
+}
+
+function renderSprintTab() {
+  document.getElementById('sprint-header-area').innerHTML = renderSprintHeaderHTML();
+  renderSprintGoals();
+  renderSprintProjects();
+  renderSprintTasks();
+  renderSprintReviewForm();
+  populateDropdowns();
+}
+
+function renderSprintHeaderHTML() {
+  const end = sprintEndDate();
+  const today = new Date(); today.setHours(0,0,0,0);
+  const daysLeft = end ? Math.max(0, Math.ceil((end-today)/86400000)) : null;
+  const fmt = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const startFmt = sprintState.startDate ? fmt(new Date(sprintState.startDate+'T00:00')) : '?';
+  const endFmt = end ? fmt(end) : '?';
+  return `<div class="sprint-header">
+    <div class="flex justify-between items-center">
+      <div><div class="sprint-hdr-title">Sprint ${sprintState.num}</div><div class="sprint-hdr-sub">${startFmt} – ${endFmt}</div></div>
+      <div style="text-align:right"><div class="sprint-days">${daysLeft!==null?daysLeft:'—'}</div><div class="sprint-days-lbl">days left</div></div>
+    </div>
+    <div class="flex gap8" style="margin-top:10px">
+      <button class="sprint-nav-btn" onclick="changeSprint(-1)">← Prev</button>
+      <button class="sprint-nav-btn" onclick="changeSprint(1)">Next →</button>
+      <button class="sprint-nav-btn" onclick="setSprintStart()">Set dates</button>
+    </div>
+  </div>`;
+}
+
+function renderSprintGoals() {
+  const el = document.getElementById('sprint-goals-body'); if (!el) return;
+  if (!sprintState.goals.length) { el.innerHTML='<p class="no-tasks text-sm text-gray">No goals yet — add your 90-day goals above.</p>'; return; }
+  el.innerHTML = sprintState.goals.map((g,i) => `<div class="goal-row">
+    <div class="goal-num">${i+1}</div>
+    <div>
+      <div class="goal-name">${esc(g.fields.Name||'')}</div>
+      ${g.fields['Better Target']?`<div class="goal-target">Better: ${esc(g.fields['Better Target'])}</div>`:''}
+    </div>
+  </div>`).join('');
+}
+
+function renderSprintProjects() {
+  const el = document.getElementById('sprint-projects-body'); if (!el) return;
+  if (!sprintState.projects.length) { el.innerHTML='<p class="no-tasks text-sm text-gray">No projects this sprint yet.</p>'; return; }
+  const sc = {Active:'var(--teal)',Complete:'var(--gray-mid)',Deferred:'var(--amber)'};
+  el.innerHTML = sprintState.projects.map(p => {
+    const gName = sprintState.goals.find(g=>(p.fields.Goal||[]).includes(g.id))?.fields.Name||'';
+    return `<div class="project-row">
+      <div style="width:8px;height:8px;border-radius:50%;background:${sc[p.fields.Status]||'var(--gray-light)'};flex-shrink:0"></div>
+      <div style="flex:1"><div class="project-name">${esc(p.fields.Name||'')}</div>${gName?`<div class="text-sm text-gray">${esc(gName)}</div>`:''}</div>
+      <span class="badge" style="background:var(--gray-light);color:var(--gray)">${p.fields.Status||'Active'}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderSprintTasks() {
+  const kat = sprintState.tasks.filter(t=>t.fields.Owner==='Kat');
+  const tim = sprintState.tasks.filter(t=>t.fields.Owner==='Tim');
+  const katEl = document.getElementById('my-sprint-tasks-body');
+  const timEl = document.getElementById('tim-sprint-tasks-body');
+  if (katEl) katEl.innerHTML = kat.length ? kat.map(t=>sprintTaskHTML(t,true)).join('') : '<p class="no-tasks text-sm text-gray">No tasks assigned to you this sprint.</p>';
+  if (timEl) timEl.innerHTML = tim.length ? tim.map(t=>sprintTaskHTML(t,false)).join('') : '<p class="no-tasks text-sm text-gray">No tasks assigned to Tim this sprint.</p>';
+}
+
+function sprintTaskHTML(t, isKat) {
+  const f = t.fields;
+  const done = f.Status==='Done';
+  const pulled = f['Pulled to Daily']===true;
+  const pName = sprintState.projects.find(p=>(f.Project||[]).includes(p.id))?.fields.Name||'';
+  const hrs = f['Estimated Hours'];
+  let pullBtn = '';
+  if (isKat && !done) {
+    pullBtn = pulled
+      ? `<button class="pull-btn pulled">✓ In plan</button>`
+      : `<button class="pull-btn" onclick="pullToDaily('${t.id}')">→ Today</button>`;
+  }
+  return `<div class="sprint-task-row${done?' done':''}">
+    <div class="task-check${done?' checked':''}"${isKat?` onclick="toggleSprintTaskDone('${t.id}',${!done})"`:' style="cursor:default"'}></div>
+    <div class="task-body">
+      <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
+      <div class="task-meta">
+        ${pName?`<span class="task-pill tp-area">${esc(pName)}</span>`:''}
+        ${hrs?`<span class="task-pill tp-time">${hrs}h</span>`:''}
+        ${f.Status&&f.Status!=='To Do'?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">${f.Status}</span>`:''}
+      </div>
+    </div>
+    ${pullBtn}
+  </div>`;
+}
+
+async function toggleSprintTaskDone(id, done) {
+  try {
+    await AT.updateSprintTask(id,{Status:done?'Done':'To Do'});
+    const t = sprintState.tasks.find(t=>t.id===id);
+    if (t) t.fields.Status = done?'Done':'To Do';
+    renderSprintTasks();
+    toast(done?'Done ✓':'Marked to do');
+  } catch(e) { toast('Error: '+e.message); }
+}
+
+async function pullToDaily(sprintTaskId) {
+  const t = sprintState.tasks.find(t=>t.id===sprintTaskId);
+  if (!t) return;
+  const fields = {
+    'Name': t.fields.Name, 'Status': 'To Do',
+    'Date Added': state.dayKey, 'Target Date': state.dayKey,
+    'Priority': 'Q1 Do Now', 'Person': 'Kat', 'Area': ['Business']
+  };
+  if (t.fields['Estimated Hours']) fields['Estimated Minutes'] = Math.round(t.fields['Estimated Hours']*60);
+  try {
+    const r = await AT.createTask(fields);
+    state.tasks.unshift(r.records[0]);
+    await AT.updateSprintTask(sprintTaskId,{'Pulled to Daily':true});
+    t.fields['Pulled to Daily'] = true;
+    renderSprintTasks();
+    renderTodayTasks();
+    toast('Added to today ✓');
+  } catch(e) { toast('Error: '+e.message); }
+}
+
+function renderSprintReviewForm() {
+  const el = document.getElementById('sprint-review-form'); if (!el) return;
+  const r = sprintState.review?.fields||{};
+  el.innerHTML = SPRINT_REVIEW_FIELDS.map(([label,field]) =>
+    `<div class="refl-label">${label}</div><textarea class="refl-textarea" id="${srId(field)}">${esc(r[field]||'')}</textarea>`
+  ).join('');
+}
+
+async function saveSprintReview() {
+  const fields = {'Sprint': sprintState.num};
+  SPRINT_REVIEW_FIELDS.forEach(([_,field]) => {
+    const el = document.getElementById(srId(field));
+    if (el?.value.trim()) fields[field] = el.value.trim();
+  });
+  try {
+    await AT.saveSprintReview(sprintState.num, fields);
+    toast('Sprint review saved ✓');
+  } catch(e) { toast('Error: '+e.message); }
+}
+
+function toggleSprintReview() {
+  const body = document.getElementById('sprint-review-body');
+  const icon = document.getElementById('review-toggle-icon');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  icon.classList.toggle('open', !open);
+}
+
+function changeSprint(delta) {
+  sprintState.num = Math.max(1, sprintState.num+delta);
+  if (sprintState.startDate) {
+    const d = new Date(sprintState.startDate+'T00:00');
+    d.setDate(d.getDate()+14*delta);
+    sprintState.startDate = d.toISOString().slice(0,10);
+  }
+  saveSprintConfig();
+  loadSprintData();
+}
+
+function setSprintStart() {
+  const d = prompt('Sprint start date (YYYY-MM-DD):', sprintState.startDate||state.dayKey);
+  if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    sprintState.startDate = d;
+    saveSprintConfig();
+    document.getElementById('sprint-header-area').innerHTML = renderSprintHeaderHTML();
+    toast('Sprint dates updated');
+  }
+}
+
+function toggleAddGoal() {
+  const f=document.getElementById('add-goal-form'); f.style.display=f.style.display==='none'?'block':'none';
+}
+function toggleAddProject() {
+  const f=document.getElementById('add-project-form'); f.style.display=f.style.display==='none'?'block':'none';
+}
+function toggleAddSprintTask(who) {
+  const f=document.getElementById('add-sprint-task-'+who); f.style.display=f.style.display==='none'?'block':'none';
+}
+
+async function addGoal() {
+  const name = document.getElementById('new-goal-name').value.trim();
+  if (!name) return;
+  const better = document.getElementById('new-goal-better').value.trim();
+  const fields = {Name: name};
+  if (better) fields['Better Target'] = better;
+  try {
+    const r = await AT.createSprintGoal(fields);
+    sprintState.goals.push(r.records[0]);
+    document.getElementById('new-goal-name').value='';
+    document.getElementById('new-goal-better').value='';
+    document.getElementById('add-goal-form').style.display='none';
+    renderSprintGoals(); populateDropdowns(); toast('Goal added');
+  } catch(e) { toast('Error: '+e.message); }
+}
+
+async function addProject() {
+  const name = document.getElementById('new-project-name').value.trim();
+  if (!name) return;
+  const goalId = document.getElementById('new-project-goal').value;
+  const fields = {Name: name, Sprint: sprintState.num, Status: 'Active'};
+  if (goalId) fields.Goal = [goalId];
+  try {
+    const r = await AT.createSprintProject(fields);
+    sprintState.projects.push(r.records[0]);
+    document.getElementById('new-project-name').value='';
+    document.getElementById('new-project-goal').value='';
+    document.getElementById('add-project-form').style.display='none';
+    renderSprintProjects(); populateDropdowns(); toast('Project added');
+  } catch(e) { toast('Error: '+e.message); }
+}
+
+async function addSprintTask(owner) {
+  const s = owner.toLowerCase();
+  const name = document.getElementById(`new-stask-name-${s}`).value.trim();
+  if (!name) return;
+  const projectId = document.getElementById(`new-stask-project-${s}`).value;
+  const hrs = parseFloat(document.getElementById(`new-stask-hrs-${s}`).value)||null;
+  const fields = {Name: name, Owner: owner, Sprint: sprintState.num, Status: 'To Do'};
+  if (projectId) fields.Project = [projectId];
+  if (hrs) fields['Estimated Hours'] = hrs;
+  try {
+    const r = await AT.createSprintTask(fields);
+    sprintState.tasks.push(r.records[0]);
+    document.getElementById(`new-stask-name-${s}`).value='';
+    document.getElementById(`new-stask-project-${s}`).value='';
+    document.getElementById(`new-stask-hrs-${s}`).value='';
+    document.getElementById(`add-sprint-task-${s}`).style.display='none';
+    renderSprintTasks(); toast('Task added');
+  } catch(e) { toast('Error: '+e.message); }
+}
+
+function populateDropdowns() {
+  const pOpts = sprintState.projects.map(p=>`<option value="${p.id}">${esc(p.fields.Name||'')}</option>`).join('');
+  const gOpts = sprintState.goals.map(g=>`<option value="${g.id}">${esc(g.fields.Name||'')}</option>`).join('');
+  ['kat','tim'].forEach(s => {
+    const el = document.getElementById(`new-stask-project-${s}`);
+    if (el) el.innerHTML = '<option value="">Project…</option>'+pOpts;
+  });
+  const gEl = document.getElementById('new-project-goal');
+  if (gEl) gEl.innerHTML = '<option value="">Goal (optional)…</option>'+gOpts;
 }
 
 // ─── Global voice ──────────────────────────────────────────────
