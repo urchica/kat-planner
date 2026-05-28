@@ -762,6 +762,16 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
   </div>
 </div>
 
+<!-- Page voice overlay -->
+<div id="page-voice-overlay" style="display:none;position:fixed;bottom:132px;left:50%;transform:translateX(-50%);width:calc(100% - 32px);max-width:568px;background:var(--white);border:1px solid var(--border);border-radius:12px;padding:12px 14px;box-shadow:0 4px 20px rgba(0,0,0,.2);z-index:150">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+    <span style="font-size:11px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em" id="pvo-tab-label">Listening…</span>
+    <span style="font-size:11px;color:var(--gray)">Tap 🎤 again to stop</span>
+  </div>
+  <div style="font-size:11px;color:var(--gray);margin-bottom:8px;line-height:1.6" id="pvo-hints"></div>
+  <div style="font-size:13px;color:var(--black);min-height:36px;background:var(--gray-light);border-radius:8px;padding:8px 10px;line-height:1.4;font-style:italic" id="pvo-transcript">…</div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -1770,53 +1780,176 @@ function populateDropdowns() {
   if (gEl) gEl.innerHTML = '<option value="">Goal (optional)…</option>'+gOpts;
 }
 
-// ─── Global voice ──────────────────────────────────────────────
-let globalVoiceTarget = null;
+// ─── Page-level voice ──────────────────────────────────────────
+const PAGE_VOICE_HINTS = {
+  day:    '"level 2" · "priority 1 finish the report" · "add task call dentist"',
+  tasks:  '"add task book appointment" · "area health" · "30 minutes"',
+  log:    '"mental focus 3" · "emotional energy 4" · "physical energy 2" · "life fuel 3" · "community 5"\n"what worked got through all my priorities" · "what to change take more breaks" · "day rating 4"\n"symptom fatigue" · "severity 3" · "duration two hours" · "trigger stress" · "action took rest"',
+  sprint: '"add task write proposal" · "add goal launch website" · "add project rebrand"',
+  week:   ''
+};
 
-function getDefaultVoiceTarget() {
-  const activeTab = ['day','tasks','log','week','sprint'].find(t => document.getElementById('panel-'+t)?.classList.contains('active'));
-  const map = { day:'day-task-input', tasks:'all-task-input', log:'refl-good', sprint:'new-stask-name-kat' };
-  const id = map[activeTab];
-  return id ? document.getElementById(id) : null;
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+function wordToNum(s) {
+  const m = {zero:0,one:1,two:2,three:3,four:4,five:5};
+  const w = (s||'').toLowerCase().trim();
+  return m[w] !== undefined ? m[w] : (isNaN(parseInt(w)) ? null : parseInt(w));
 }
-document.addEventListener('focusin', e => {
-  const el = e.target;
-  if (el.tagName==='TEXTAREA') { globalVoiceTarget=el; return; }
-  if (el.tagName==='INPUT') {
-    const t = el.type||'text';
-    if (!['number','checkbox','radio','file','button','submit','date','range','color'].includes(t)) globalVoiceTarget=el;
+
+function extractSection(text, keyword, stops) {
+  const idx = text.indexOf(keyword);
+  if (idx === -1) return null;
+  const after = text.slice(idx + keyword.length).replace(/^[\s:,]+/, '');
+  if (!after) return null;
+  let end = after.length;
+  for (const stop of stops) {
+    if (stop === keyword) continue;
+    const si = after.indexOf(stop);
+    if (si > 0 && si < end) end = si;
   }
-});
+  const result = after.slice(0, end).trim();
+  return result || null;
+}
+
+function setPillarDirect(name, val) {
+  state.pillars[name] = val;
+  document.querySelectorAll('#pillars-form .pillar-row').forEach(row => {
+    if (row.querySelector('.pillar-name')?.textContent.trim() === name) {
+      row.querySelectorAll('.scale-btn').forEach((b,i) => b.classList.toggle('sel', i+1===val));
+    }
+  });
+  renderPillarsDisplay();
+  saveLocalState();
+}
+
+function applyPageVoice(transcript, tab) {
+  const t = transcript.toLowerCase().replace(/[,\.!?]/g,' ').replace(/\s+/g,' ').trim();
+  const updates = [];
+
+  const STOPS = ['mental focus','emotional energy','physical energy','life fuel','community',
+    'what worked','worked well','what to change','to change','differently','notes','note',
+    'day rating','rating','symptom','severity','duration','trigger','action taken','action',
+    'level','day level','priority one','priority two','priority three',
+    'priority 1','priority 2','priority 3','first priority','second priority','third priority',
+    'add task','task','add goal','goal','add project','project','meeting'];
+
+  if (tab === 'log') {
+    [['mental focus','Mental Focus'],['emotional energy','Emotional Energy'],
+     ['physical energy','Physical Energy'],['life fuel','Life Fuel'],['community','Community']
+    ].forEach(([kw, name]) => {
+      const val = extractSection(t, kw, STOPS);
+      if (val) { const n=wordToNum(val.split(/\s+/)[0]); if(n&&n>=1&&n<=5){setPillarDirect(name,n);updates.push(`${name}: ${n}`);} }
+    });
+
+    const ww = extractSection(t,'what worked',STOPS)||extractSection(t,'worked well',STOPS);
+    if (ww) { document.getElementById('refl-good').value=cap(ww); updates.push('What worked'); }
+
+    const wc = extractSection(t,'what to change',STOPS)||extractSection(t,'to change',STOPS)||extractSection(t,'differently',STOPS);
+    if (wc) { document.getElementById('refl-change').value=cap(wc); updates.push('What to change'); }
+
+    const nn = extractSection(t,'notes',STOPS)||extractSection(t,'note',STOPS);
+    if (nn) { document.getElementById('refl-notes').value=cap(nn); updates.push('Notes'); }
+
+    const rt = extractSection(t,'day rating',STOPS)||extractSection(t,'rating',STOPS);
+    if (rt) { const n=wordToNum(rt.split(/\s+/)[0]); if(n&&n>=1&&n<=5){setDayRating(n,null);updates.push(`Day rating: ${n}`);} }
+
+    const symKw = extractSection(t,'symptom',STOPS);
+    if (symKw) {
+      const symEl=document.getElementById('sym-name');
+      const opts=[...symEl.options].map(o=>o.value.toLowerCase());
+      const match=opts.find(o=>o&&symKw.includes(o));
+      if(match){symEl.value=match;symEl.dispatchEvent(new Event('change'));}
+      else{symEl.value='Other';document.getElementById('sym-other').value=cap(symKw);document.getElementById('sym-other-row').style.display='flex';}
+      updates.push('Symptom');
+    }
+    const sevT=extractSection(t,'severity',STOPS);
+    if(sevT){const n=wordToNum(sevT.split(/\s+/)[0]);if(n&&n>=1&&n<=5){const b=document.querySelector(`[onclick="setSymSev(${n},this)"]`);if(b)setSymSev(n,b);updates.push(`Severity: ${n}`);}}
+    const durT=extractSection(t,'duration',STOPS);
+    if(durT){document.getElementById('sym-duration').value=cap(durT);updates.push('Duration');}
+    const trigT=extractSection(t,'trigger',STOPS);
+    if(trigT){document.getElementById('sym-trigger').value=cap(trigT);updates.push('Trigger');}
+    const actT=extractSection(t,'action taken',STOPS)||extractSection(t,'action',STOPS);
+    if(actT){document.getElementById('sym-action').value=cap(actT);updates.push('Action');}
+  }
+
+  if (tab === 'day') {
+    const lvlT=extractSection(t,'day level',STOPS)||extractSection(t,'level',STOPS);
+    if(lvlT){const lm={full:1,one:1,'1':1,moderate:2,two:2,'2':2,light:3,three:3,'3':3,survival:4,four:4,'4':4};const l=lm[lvlT.split(/\s+/)[0]];if(l){setLevelManual(l);updates.push(`Level: ${l}`);}}
+
+    [['priority 1','priority one','first priority',0],
+     ['priority 2','priority two','second priority',1],
+     ['priority 3','priority three','third priority',2]
+    ].forEach(([k1,k2,k3,idx])=>{
+      const val=extractSection(t,k1,STOPS)||extractSection(t,k2,STOPS)||extractSection(t,k3,STOPS);
+      if(val&&state.priorities[idx]!==undefined){state.priorities[idx].text=cap(val);renderPriorities();saveLocalState();updates.push(`Priority ${idx+1}`);}
+    });
+
+    const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
+    if(taskT){const el=document.getElementById('day-task-input');el.value=cap(taskT);autoResize(el);updates.push('Task ready — tap + to save');}
+  }
+
+  if (tab === 'tasks') {
+    const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
+    if(taskT){const el=document.getElementById('all-task-input');el.value=cap(taskT);autoResize(el);updates.push('Task ready — tap + to save');}
+  }
+
+  if (tab === 'sprint') {
+    const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
+    if(taskT){document.getElementById('new-stask-name-kat').value=cap(taskT);if(document.getElementById('add-sprint-task-kat').style.display==='none')toggleAddSprintTask('kat');updates.push('Sprint task ready — tap Add');}
+    const goalT=extractSection(t,'add goal',STOPS)||extractSection(t,'goal',STOPS);
+    if(goalT){document.getElementById('new-goal-name').value=cap(goalT);if(document.getElementById('add-goal-form').style.display==='none')toggleAddGoal();updates.push('Goal ready — tap Add goal');}
+    const projT=extractSection(t,'add project',STOPS)||extractSection(t,'project',STOPS);
+    if(projT){document.getElementById('new-project-name').value=cap(projT);if(document.getElementById('add-project-form').style.display==='none')toggleAddProject();updates.push('Project ready — tap Add');}
+  }
+
+  if (updates.length) toast('✓ ' + updates.join(' · '), 4000);
+  else toast("No fields matched — try keywords like 'mental focus 3' or 'what worked…'", 4000);
+}
 
 function toggleGlobalVoice() {
   const btn = document.getElementById('global-mic-btn');
   if (!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)) {
     toast('Voice not supported in this browser'); return;
   }
-  if (state.voiceActive==='global') {
-    state.recognition?.stop(); state.voiceActive=null;
-    btn.classList.remove('active','voice-pulse');
-    return;
+  const activeTab = ['day','tasks','log','week','sprint'].find(t =>
+    document.getElementById('panel-'+t)?.classList.contains('active')) || 'day';
+  if (state.voiceActive==='page') {
+    state.recognition?.stop(); return;
   }
   state.recognition?.stop();
-  const active = document.activeElement;
-  const isEditable = active && (active.tagName==='TEXTAREA' || (active.tagName==='INPUT' && !['number','checkbox','radio','file','button','submit','date'].includes(active.type||'')));
-  const target = isEditable ? active : (globalVoiceTarget || getDefaultVoiceTarget());
-  if (!target) { toast('Tap a text field first, then use the mic'); return; }
+  const overlay = document.getElementById('page-voice-overlay');
+  const previewEl = document.getElementById('pvo-transcript');
+  document.getElementById('pvo-tab-label').textContent =
+    activeTab.charAt(0).toUpperCase()+activeTab.slice(1)+' tab — listening…';
+  document.getElementById('pvo-hints').textContent = PAGE_VOICE_HINTS[activeTab]||'';
+  previewEl.textContent = '…';
+  overlay.style.display = 'block';
   const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
   const r = new SR();
   r.continuous=true; r.interimResults=true; r.lang='en-US';
+  let finalTranscript = '';
   r.onresult = e => {
-    let t=''; for (let i=e.resultIndex;i<e.results.length;i++) t+=e.results[i][0].transcript;
-    target.value=t;
-    autoResize(target);
-    target.dispatchEvent(new Event('input',{bubbles:true}));
+    finalTranscript=''; let interim='';
+    for(let i=0;i<e.results.length;i++){
+      if(e.results[i].isFinal) finalTranscript+=e.results[i][0].transcript+' ';
+      else interim+=e.results[i][0].transcript;
+    }
+    previewEl.textContent = (finalTranscript+interim).trim()||'…';
   };
-  r.onend = () => { state.voiceActive=null; btn.classList.remove('active','voice-pulse'); };
+  r.onend = () => {
+    state.voiceActive=null; btn.classList.remove('active','voice-pulse');
+    overlay.style.display='none';
+    if(finalTranscript.trim()) applyPageVoice(finalTranscript.trim(), activeTab);
+  };
+  r.onerror = e => {
+    state.voiceActive=null; btn.classList.remove('active','voice-pulse');
+    overlay.style.display='none';
+    if(e.error!=='aborted') toast('Voice error: '+e.error);
+  };
   r.start();
-  state.recognition=r; state.voiceActive='global';
+  state.recognition=r; state.voiceActive='page';
   btn.classList.add('active','voice-pulse');
-  toast('Listening…', 1500);
 }
 
 // ─── Boot ──────────────────────────────────────────────────────
