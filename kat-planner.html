@@ -487,6 +487,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <div class="form-row" id="sym-other-row" style="display:none">
               <span class="form-label">Specify</span>
               <input class="form-input" id="sym-other" placeholder="Describe symptom..."/>
+              <button class="icon-btn" id="voice-btn-sym-other" onclick="toggleVoice('sym-other','voice-btn-sym-other')" title="Voice" style="width:36px;height:36px;font-size:15px;flex-shrink:0">🎤</button>
             </div>
             <div class="form-row">
               <span class="form-label">Severity</span>
@@ -501,6 +502,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <div class="form-row">
               <span class="form-label">Duration</span>
               <input class="form-input" id="sym-duration" placeholder="e.g. 2 hours, all day"/>
+              <button class="icon-btn" id="voice-btn-sym-duration" onclick="toggleVoice('sym-duration','voice-btn-sym-duration')" title="Voice" style="width:36px;height:36px;font-size:15px;flex-shrink:0">🎤</button>
             </div>
             <div class="form-row">
               <span class="form-label">Impact</span>
@@ -511,10 +513,12 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <div class="form-row">
               <span class="form-label">Trigger?</span>
               <input class="form-input" id="sym-trigger" placeholder="Possible cause..."/>
+              <button class="icon-btn" id="voice-btn-sym-trigger" onclick="toggleVoice('sym-trigger','voice-btn-sym-trigger')" title="Voice" style="width:36px;height:36px;font-size:15px;flex-shrink:0">🎤</button>
             </div>
             <div class="form-row">
               <span class="form-label">Action taken</span>
               <input class="form-input" id="sym-action" placeholder="What did you do?"/>
+              <button class="icon-btn" id="voice-btn-sym-action" onclick="toggleVoice('sym-action','voice-btn-sym-action')" title="Voice" style="width:36px;height:36px;font-size:15px;flex-shrink:0">🎤</button>
             </div>
             <button class="btn btn-primary mt8" onclick="logSymptom()">Log symptom</button>
           </div>
@@ -546,11 +550,20 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <button class="rating-btn" onclick="setDayRating(5,this)">5</button>
           </div>
           <div class="refl-label">What worked well today?</div>
-          <textarea class="refl-textarea" id="refl-good" placeholder="One thing that went well..."></textarea>
+          <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:8px">
+            <textarea class="refl-textarea" id="refl-good" placeholder="One thing that went well..." style="flex:1;margin-bottom:0"></textarea>
+            <button class="icon-btn" id="voice-btn-refl-good" onclick="toggleVoice('refl-good','voice-btn-refl-good')" title="Voice input">🎤</button>
+          </div>
           <div class="refl-label">What to do differently tomorrow?</div>
-          <textarea class="refl-textarea" id="refl-change" placeholder="One adjustment for tomorrow..."></textarea>
+          <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:8px">
+            <textarea class="refl-textarea" id="refl-change" placeholder="One adjustment for tomorrow..." style="flex:1;margin-bottom:0"></textarea>
+            <button class="icon-btn" id="voice-btn-refl-change" onclick="toggleVoice('refl-change','voice-btn-refl-change')" title="Voice input">🎤</button>
+          </div>
           <div class="refl-label">Notes / carry forward</div>
-          <textarea class="refl-textarea" id="refl-notes" placeholder="Anything to remember for tomorrow..."></textarea>
+          <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:8px">
+            <textarea class="refl-textarea" id="refl-notes" placeholder="Anything to remember for tomorrow..." style="flex:1;margin-bottom:0"></textarea>
+            <button class="icon-btn" id="voice-btn-refl-notes" onclick="toggleVoice('refl-notes','voice-btn-refl-notes')" title="Voice input">🎤</button>
+          </div>
           <button class="btn btn-primary" style="width:100%" onclick="saveReflection()">Save reflection</button>
         </div>
       </div>
@@ -1490,12 +1503,13 @@ function sprintEndDate() {
 
 async function loadSprintData() {
   try {
-    const [goals, projects, tasks, review] = await Promise.all([
+    const [goals, projects, tasks] = await Promise.all([
       AT.getSprintGoals(),
       AT.getSprintProjects(sprintState.num),
-      AT.getSprintTasks(sprintState.num),
-      AT.getSprintReview(sprintState.num)
+      AT.getSprintTasks(sprintState.num)
     ]);
+    let review = null;
+    try { review = await AT.getSprintReview(sprintState.num); } catch(e) {}
     sprintState.goals = goals;
     sprintState.projects = projects;
     sprintState.tasks = tasks;
@@ -1758,6 +1772,13 @@ function populateDropdowns() {
 
 // ─── Global voice ──────────────────────────────────────────────
 let globalVoiceTarget = null;
+
+function getDefaultVoiceTarget() {
+  const activeTab = ['day','tasks','log','week','sprint'].find(t => document.getElementById('panel-'+t)?.classList.contains('active'));
+  const map = { day:'day-task-input', tasks:'all-task-input', log:'refl-good', sprint:'new-stask-name-kat' };
+  const id = map[activeTab];
+  return id ? document.getElementById(id) : null;
+}
 document.addEventListener('focusin', e => {
   const el = e.target;
   if (el.tagName==='TEXTAREA') { globalVoiceTarget=el; return; }
@@ -1780,7 +1801,7 @@ function toggleGlobalVoice() {
   state.recognition?.stop();
   const active = document.activeElement;
   const isEditable = active && (active.tagName==='TEXTAREA' || (active.tagName==='INPUT' && !['number','checkbox','radio','file','button','submit','date'].includes(active.type||'')));
-  const target = isEditable ? active : globalVoiceTarget;
+  const target = isEditable ? active : (globalVoiceTarget || getDefaultVoiceTarget());
   if (!target) { toast('Tap a text field first, then use the mic'); return; }
   const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
   const r = new SR();
