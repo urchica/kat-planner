@@ -917,11 +917,11 @@ let sprintState = {
 const DEFAULT_SCHEDULE = {
   // Per weekday. Hours include emails + meetings + ½h buffer for "work".
   days: {
-    mon: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:2},
-    tue: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:1, defaultLevel:3},
-    wed: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:2, defaultLevel:2},
-    thu: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:2},
-    fri: {start:'07:30', workEnd:'13:00', wrapEnd:'13:30', work:3, business:2, exercise:1, defaultLevel:3}
+    mon: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1},
+    tue: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:1, defaultLevel:1},
+    wed: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:2, defaultLevel:1},
+    thu: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1},
+    fri: {start:'07:30', workEnd:'13:00', wrapEnd:'13:30', work:3, business:2, exercise:1, defaultLevel:1}
   },
   // Weekly targets (hours). Editable in weekly review.
   weeklyTargets: {work:25, business:10, exercise:8, admin:1, learning:4, creative:2.5},
@@ -1156,19 +1156,35 @@ function setLevel(l) {
 }
 
 // ─── Work Bar ──────────────────────────────────────────────────
+// Work-hour ceiling derived from the day's schedule. L1 = the day's full
+// planned work hours; lower levels scale that base down (interim rules —
+// the balance-aware allocation lands in build step 4).
+function currentWorkCeiling() {
+  const day = SCHEDULE.days[todaySchedKey()];
+  if (!day) return LEVEL_CONFIG[state.level].workHrs; // weekend / no template
+  const base = day.work;
+  switch (state.level) {
+    case 1: return base;
+    case 2: return Math.round(base * 0.6 * 2) / 2; // ~40% lighter
+    case 3: return Math.min(base, 2);              // top-priority + emails
+    case 4: return 1;                              // emails only
+    default: return base;
+  }
+}
+
 function renderWorkBar() {
-  const lc = LEVEL_CONFIG[state.level];
-  const ceil = lc.workHrs * 60;
+  const ceilHrs = currentWorkCeiling();
+  const ceil = ceilHrs * 60;
   const doneTasks = state.tasks.filter(t => t.fields.Status==='Done' && isWorkTask(t));
   const doneMins = doneTasks.reduce((s,t) => s+(t.fields['Actual Minutes']||t.fields['Estimated Minutes']||0), 0);
   const todoWorkMins = state.tasks.filter(t => t.fields.Status!=='Done' && t.fields.Status!=='Deferred' && isWorkTask(t)).reduce((s,t) => s+(t.fields['Estimated Minutes']||0), 0);
-  const pct = Math.min(100, Math.round(doneMins/ceil*100));
+  const pct = ceil>0 ? Math.min(100, Math.round(doneMins/ceil*100)) : 0;
   const bar = document.getElementById('work-bar');
   bar.style.width = pct+'%';
   bar.className = 'work-bar' + (pct>=100?' over':pct>=80?' warn':'');
-  document.getElementById('work-hrs-label').textContent = `${(doneMins/60).toFixed(1)} / ${lc.workHrs} hrs`;
+  document.getElementById('work-hrs-label').textContent = `${(doneMins/60).toFixed(1)} / ${ceilHrs} hrs`;
   document.getElementById('work-done-label').textContent = doneMins>=60?`${Math.floor(doneMins/60)}h ${doneMins%60}m done`:`${doneMins}m done`;
-  document.getElementById('work-ceiling-label').textContent = `Ceiling: ${lc.workHrs} hrs`;
+  document.getElementById('work-ceiling-label').textContent = `Ceiling: ${ceilHrs} hrs`;
   const banner = document.getElementById('enough-banner');
   banner.style.display = pct>=100?'flex':'none';
 }
