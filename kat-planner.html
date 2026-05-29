@@ -1401,7 +1401,8 @@ function stopTimer() {
   const mins = Math.round((Date.now()-state.timer.startTs)/60000);
   const {area, label, note} = state.timer;
   clearTimerState();
-  if (mins < 1) { toast('Timer under 1 min — not logged'); renderTimerBanner(); return; }
+  renderTimerBanner(); // hide banner immediately
+  if (mins < 1) { toast('Timer under 1 min — not logged'); return; }
   const fields = {Date: state.dayKey, Area: area, Minutes:mins, Note: note || label.replace(/^[^A-Za-z]+/,'')};
   AT.logTime(fields).then(()=>{ loadTimeLogs(); renderWorkBar(); toast(`Logged ${mins}m · ${area}`); })
     .catch(e=>toast('Error logging time: '+e.message));
