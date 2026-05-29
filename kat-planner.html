@@ -99,6 +99,9 @@ header{background:var(--white);border-bottom:1px solid var(--border);padding:12p
 .tp-area{background:var(--teal-light);color:var(--teal-dark)}
 .tp-time{background:var(--gray-light);color:var(--gray)}
 .tp-stale{background:var(--red-light);color:#A32D2D}
+.tp-overdue{background:#FFD6D6;color:#A32D2D;font-weight:600}
+.tp-soon{background:#FFF3CD;color:#856404;font-weight:600}
+.tp-date{background:#E8F4FD;color:#1565C0}
 .task-del{width:28px;height:28px;border:none;background:none;color:var(--gray-mid);cursor:pointer;font-size:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:6px}
 .task-del:hover{background:var(--red-light);color:var(--red)}
 .no-tasks{font-size:13px;color:var(--gray-mid);text-align:center;padding:20px 0;font-style:italic}
@@ -761,6 +764,56 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
   </div>
 </div>
 
+<!-- Edit task modal -->
+<div class="modal-bg" id="edit-task-modal" style="display:none" onclick="if(event.target===this)closeEditTask()">
+  <div class="modal" style="max-height:90vh;overflow-y:auto">
+    <div class="modal-title">Edit Task</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600">Name</label>
+        <input type="text" id="edit-task-name" class="field-input" style="width:100%;margin-top:4px"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600">Area</label>
+        <select id="edit-task-area" class="form-select" style="width:100%;margin-top:4px">
+          <option value="">— none —</option>
+          <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
+          <option>Learning</option><option>Creative</option><option>Rest</option>
+          <option>Relationships</option><option>Admin</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600">Priority</label>
+        <select id="edit-task-priority" class="form-select" style="width:100%;margin-top:4px">
+          <option value="">— none —</option>
+          <option>Q1 Do Now</option><option>Q2 Schedule</option>
+          <option>Q3 Delegate</option><option>Q4 Drop</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <label style="font-size:12px;color:var(--gray);font-weight:600">Est. Minutes</label>
+          <input type="number" id="edit-task-mins" class="field-num" style="width:100%;margin-top:4px" min="1" step="5"/>
+        </div>
+        <div style="flex:1">
+          <label style="font-size:12px;color:var(--gray);font-weight:600">Deadline</label>
+          <input type="date" id="edit-task-deadline" class="field-input" style="width:100%;margin-top:4px"/>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600">Status</label>
+        <select id="edit-task-status" class="form-select" style="width:100%;margin-top:4px">
+          <option>Todo</option><option>Done</option><option>Deferred</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex gap8" style="margin-top:16px">
+      <button class="btn btn-primary" style="flex:1" onclick="saveEditTask()">Save</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="closeEditTask()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Page voice overlay -->
 <div id="page-voice-overlay" style="display:none;position:fixed;bottom:132px;left:50%;transform:translateX(-50%);width:calc(100% - 32px);max-width:568px;background:var(--white);border:1px solid var(--border);border-radius:12px;padding:12px 14px;box-shadow:0 4px 20px rgba(0,0,0,.2);z-index:150">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
@@ -1191,15 +1244,33 @@ function renderTaskRow(t, ctx) {
   const qcls = q==='Q1 Do Now'?'q1':q==='Q2 Schedule'?'q2':q==='Q3 Delegate'?'q3':'q4';
   const mins = f['Estimated Minutes'];
   const daysOld = f['Date Added']?Math.floor((Date.now()-new Date(f['Date Added']))/86400000):null;
+  // Deadline pill
+  let deadlinePill = '';
+  if (f['Target Date'] && !done) {
+    const daysTo = Math.ceil((new Date(f['Target Date'])-new Date(new Date().toDateString()))/86400000);
+    if (daysTo < 0) deadlinePill = `<span class="task-pill tp-overdue">⚠ ${Math.abs(daysTo)}d overdue</span>`;
+    else if (daysTo === 0) deadlinePill = `<span class="task-pill tp-overdue">Due today</span>`;
+    else if (daysTo <= 3) deadlinePill = `<span class="task-pill tp-soon">Due in ${daysTo}d</span>`;
+    else deadlinePill = `<span class="task-pill tp-date">Due ${f['Target Date']}</span>`;
+  }
+  // Minutes display
+  let minsDisplay = '';
+  if (mins) {
+    if (mins >= 60) {
+      const h = Math.floor(mins/60), m = mins%60;
+      minsDisplay = h + 'h' + (m ? m+'m' : '');
+    } else { minsDisplay = mins+'m'; }
+  }
   return `<div class="task-row${done?' done':''}">
     <div class="task-check${done?' checked':''}" onclick="toggleTaskDone('${t.id}',${!done})"></div>
-    <div class="task-body">
+    <div class="task-body" onclick="openEditTask('${t.id}')" style="cursor:pointer">
       <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
       <div class="task-meta">
-        ${areas?`<span class="task-pill tp-area">${areas}</span>`:''}
+        ${areas?`<span class="task-pill tp-area">${esc(areas)}</span>`:''}
         ${q?`<span class="task-pill ${qcls}">${q.split(' ')[0]}</span>`:''}
-        ${mins?`<span class="task-pill tp-time">${mins}m</span>`:''}
-        ${stale&&!done?`<span class="task-pill tp-stale">⏱ ${daysOld}d old</span>`:''}
+        ${minsDisplay?`<span class="task-pill tp-time">⏱ ${minsDisplay}</span>`:''}
+        ${deadlinePill}
+        ${stale&&!done?`<span class="task-pill tp-stale">${daysOld}d old</span>`:''}
       </div>
     </div>
     <button class="task-del" onclick="deleteTask('${t.id}')">×</button>
@@ -1254,6 +1325,48 @@ function skipDone() {
   document.getElementById('done-modal').style.display = 'none';
   applyTaskDone(pendingDone.id, true, null);
   pendingDone = null;
+}
+
+let editingTaskId = null;
+function openEditTask(id) {
+  const t = state.tasks.find(t=>t.id===id);
+  if (!t) return;
+  const f = t.fields;
+  editingTaskId = id;
+  document.getElementById('edit-task-name').value = f.Name||'';
+  document.getElementById('edit-task-area').value = (Array.isArray(f.Area)?f.Area[0]:f.Area)||'';
+  document.getElementById('edit-task-priority').value = f.Priority||'';
+  document.getElementById('edit-task-mins').value = f['Estimated Minutes']||'';
+  document.getElementById('edit-task-deadline').value = f['Target Date']||'';
+  document.getElementById('edit-task-status').value = f.Status||'Todo';
+  document.getElementById('edit-task-modal').style.display='flex';
+}
+function closeEditTask() {
+  editingTaskId=null;
+  document.getElementById('edit-task-modal').style.display='none';
+}
+async function saveEditTask() {
+  if (!editingTaskId) return;
+  const fields = {
+    Name: document.getElementById('edit-task-name').value.trim(),
+    Area: document.getElementById('edit-task-area').value||undefined,
+    Priority: document.getElementById('edit-task-priority').value||undefined,
+    Status: document.getElementById('edit-task-status').value||'Todo'
+  };
+  const mins = parseInt(document.getElementById('edit-task-mins').value);
+  if (mins>0) fields['Estimated Minutes']=mins; else fields['Estimated Minutes']=undefined;
+  const dl = document.getElementById('edit-task-deadline').value;
+  if (dl) fields['Target Date']=dl; else fields['Target Date']=undefined;
+  // Remove undefined keys
+  Object.keys(fields).forEach(k=>fields[k]===undefined&&delete fields[k]);
+  try {
+    await AT.updateTask(editingTaskId, fields);
+    const idx = state.tasks.findIndex(t=>t.id===editingTaskId);
+    if (idx!==-1) state.tasks[idx].fields = {...state.tasks[idx].fields, ...fields};
+    closeEditTask();
+    renderTodayTasks(); renderAllTasks();
+    toast('Task updated');
+  } catch(e) { toast('Error: '+e.message); }
 }
 
 async function applyTaskDone(id, done, actualMins) {
@@ -1799,9 +1912,41 @@ const PAGE_VOICE_HINTS = {
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 function wordToNum(s) {
-  const m = {zero:0,one:1,two:2,three:3,four:4,five:5};
+  const m = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,
+    eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,
+    eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50,sixty:60,
+    seventy:70,eighty:80,ninety:90};
   const w = (s||'').toLowerCase().trim();
   return m[w] !== undefined ? m[w] : (isNaN(parseInt(w)) ? null : parseInt(w));
+}
+
+function parseMinutes(segment) {
+  const t = (segment||'').toLowerCase().replace(/[,\.!?]/g,' ').replace(/\s+/g,' ').trim();
+  // "an hour and a half" / "hour and a half" = 90
+  if (/an? hour and (a )?half/.test(t)||/hour and (a )?half/.test(t)) return 90;
+  // "half an hour" / "half hour" = 30
+  if (/half (an? )?hour/.test(t)) return 30;
+  // numeric decimal hours: "1.5 hours" "0.5 hours"
+  const decHr = t.match(/(\d+\.\d+)\s*hours?/);
+  if (decHr) return Math.round(parseFloat(decHr[1])*60);
+  // numeric whole hours: "2 hours" "1 hour"
+  const numHr = t.match(/(\d+)\s*hours?/);
+  if (numHr) return parseInt(numHr[1])*60;
+  // word hours: "two hours" "one hour"
+  const WORDS = ['zero','one','two','three','four','five','six','seven','eight','nine','ten',
+    'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen',
+    'twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+  for (const w of WORDS) {
+    if (new RegExp('\\b'+w+'\\s+hours?').test(t)) { const n=wordToNum(w); if(n!==null) return n*60; }
+  }
+  // numeric minutes: "90 minutes" "30 mins"
+  const numMin = t.match(/(\d+)\s*(?:minutes?|mins?)/);
+  if (numMin) return parseInt(numMin[1]);
+  // word minutes: "ninety minutes" "thirty mins"
+  for (const w of WORDS) {
+    if (new RegExp('\\b'+w+'\\s+(?:minutes?|mins?)').test(t)) { const n=wordToNum(w); if(n!==null) return n; }
+  }
+  return null;
 }
 
 function extractSection(text, keyword, stops) {
@@ -1878,18 +2023,8 @@ function parseTaskSegment(segment) {
     if (PRIO_MAP[key]) priority = PRIO_MAP[key];
   }
 
-  // Minutes (e.g. "30 minutes" or "minutes 30" or "90 mins")
-  let minutes = null;
-  const minMatch = t.match(/(\d+)\s*(?:minutes?|mins?)/);
-  if (minMatch) minutes = parseInt(minMatch[1]);
-  else {
-    const minIdx = t.search(/\bminutes?\b|\bmins?\b/);
-    if (minIdx !== -1) {
-      const before = t.slice(0, minIdx).trim().split(/\s+/).pop();
-      const n = wordToNum(before);
-      if (n && n > 0) minutes = n;
-    }
-  }
+  // Minutes — handles "90 minutes", "ninety minutes", "an hour and a half", "1.5 hours", "two hours" etc.
+  const minutes = parseMinutes(segment);
 
   return { name, area, priority, minutes };
 }
