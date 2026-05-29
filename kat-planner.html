@@ -285,6 +285,50 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         </div>
       </div>
 
+      <!-- Time today -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--coral)"></span>Time today</span>
+          <span class="text-sm text-gray" id="time-total-label">0m logged</span>
+        </div>
+        <div class="card-body">
+          <!-- Running timer banner -->
+          <div id="timer-banner" style="display:none;align-items:center;justify-content:space-between;gap:8px;background:#FAECE7;border:1px solid var(--coral);border-radius:10px;padding:8px 12px;margin-bottom:10px">
+            <div><div style="font-weight:700;color:#4A1B0C" id="timer-banner-label">—</div><div class="text-sm" style="color:#7A3520;font-variant-numeric:tabular-nums" id="timer-banner-elapsed">0:00</div></div>
+            <div class="flex gap8">
+              <button class="btn btn-ghost btn-sm" onclick="cancelTimer()">Cancel</button>
+              <button class="btn btn-primary btn-sm" onclick="stopTimer()">■ Stop &amp; log</button>
+            </div>
+          </div>
+          <!-- Quick-start timer chips -->
+          <div id="timer-chips" class="flex gap8" style="flex-wrap:wrap;margin-bottom:10px">
+            <!-- rendered by JS -->
+          </div>
+          <!-- Per-area ledger -->
+          <div id="time-ledger"><!-- rendered by JS --></div>
+          <!-- Brain dump -->
+          <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+            <div class="text-sm text-gray" style="margin-bottom:6px">✏️ Brain-dump your time — "two hours on work, half an hour emails, one hour exercise"</div>
+            <div class="add-task-bar">
+              <textarea class="add-task-input" id="braindump-input" rows="1" placeholder="Talk through your time (or tap 🎤)..." oninput="autoResize(this)"></textarea>
+              <button class="icon-btn" id="voice-btn-braindump" onclick="toggleVoice('braindump-input','voice-btn-braindump')" title="Voice input">🎤</button>
+              <button class="icon-btn" onclick="logBrainDump()" title="Parse time">＋</button>
+            </div>
+            <!-- Confirm/correct screen -->
+            <div id="braindump-confirm" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px">
+              <div class="text-sm" style="font-weight:600;margin-bottom:6px">Confirm time entries:</div>
+              <div id="braindump-rows"></div>
+              <div class="flex gap8" style="margin-top:8px">
+                <button class="btn btn-ghost btn-sm" onclick="addBrainDumpRow()">+ Row</button>
+                <div style="flex:1"></div>
+                <button class="btn btn-ghost btn-sm" onclick="cancelBrainDump()">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="confirmBrainDump()">Log all</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 5 Daily Pillars (compact) -->
       <div class="card">
         <div class="card-header">
@@ -904,7 +948,8 @@ let state = {
   priorities: [{text:'',q:'Q2 Schedule',done:false},{text:'',q:'Q2 Schedule',done:false},{text:'',q:'Q2 Schedule',done:false}],
   pillars: {}, reflection: {}, dayRating: null,
   symSev: null, matrixAnswers: {}, suggestedLevel: null,
-  dayFieldsVisible: false, allFieldsVisible: false, voiceActive: null, recognition: null
+  dayFieldsVisible: false, allFieldsVisible: false, voiceActive: null, recognition: null,
+  timeLogs: [], timer: null, timerInterval: null
 };
 
 let sprintState = {
@@ -1019,6 +1064,12 @@ const AT = {
     const r = await this.call('GET',`Daily%20Log?filterByFormula=${encodeURIComponent(`{Date}>='${fromDate}'`)}`);
     return r.records||[];
   },
+  async logTime(fields) { return this.call('POST','Time%20Log',{records:[{fields}]}); },
+  async getTimeLogs(fromDate) {
+    const r = await this.call('GET',`Time%20Log?filterByFormula=${encodeURIComponent(`{Date}>='${fromDate}'`)}`);
+    return r.records||[];
+  },
+  async deleteTimeLog(id) { return this.call('DELETE',`Time%20Log/${id}`); },
   async verify() {
     const r = await this.call('GET','Tasks?maxRecords=1');
     return !!r;
@@ -1063,7 +1114,10 @@ async function initApp() {
   renderPriorities();
   renderMeetings();
   renderWorkBar();
+  renderTimerChips();
+  restoreTimer();
   await loadTasks();
+  loadTimeLogs();
   loadWeekData();
   // Load daily log from Airtable
   try {
@@ -1194,6 +1248,174 @@ function isWorkTask(t) {
   if (!area) return false;
   if (Array.isArray(area)) return area.some(a=>WORK_AREAS.includes(a));
   return WORK_AREAS.includes(area);
+}
+
+// ─── Time logging (3 ways: timer · brain-dump · auto from task) ──
+const TIMELOG_AREAS = ['Work Work','Business','Health & Fitness','Learning','Creative','Rest','Relationships','Admin','Buffer','Misc'];
+const TIME_AREA_COLORS = {'Work Work':'var(--teal)','Business':'var(--teal-dark)','Health & Fitness':'var(--purple)','Learning':'var(--amber)','Creative':'var(--coral)','Rest':'#9FE1CB','Relationships':'#AFA9EC','Admin':'var(--gray)','Buffer':'#C7C2BB','Misc':'#B8B2AA'};
+// Quick-start chips: label · Area to log · optional note
+const TIMER_CHIPS = [
+  {label:'✉️ Emails', area:'Work Work', note:'Emails'},
+  {label:'🏃 Exercise', area:'Health & Fitness', note:''},
+  {label:'👥 Meeting', area:'Work Work', note:'Meeting'},
+  {label:'🐕 Speckled Dog', area:'Business', note:''},
+  {label:'⏸ Buffer', area:'Buffer', note:''},
+  {label:'• Misc', area:'Misc', note:''}
+];
+
+async function loadTimeLogs() {
+  try {
+    const logs = await AT.getTimeLogs(state.dayKey);
+    state.timeLogs = (logs||[]).filter(l => l.fields.Date === state.dayKey);
+  } catch(e) { state.timeLogs = []; }
+  renderTimeLedger();
+}
+
+function renderTimerChips() {
+  const el = document.getElementById('timer-chips');
+  if (!el) return;
+  el.innerHTML = TIMER_CHIPS.map((c,i) =>
+    `<button class="btn btn-ghost btn-sm" onclick="startTimer(${i})">▶ ${c.label}</button>`
+  ).join('');
+}
+
+function renderTimeLedger() {
+  const el = document.getElementById('time-ledger');
+  if (!el) return;
+  const byArea = {};
+  state.timeLogs.forEach(l => {
+    const a = Array.isArray(l.fields.Area)?l.fields.Area[0]:l.fields.Area;
+    const m = l.fields.Minutes||0;
+    if (a) byArea[a] = (byArea[a]||0)+m;
+  });
+  const total = Object.values(byArea).reduce((s,v)=>s+v,0);
+  const totalEl = document.getElementById('time-total-label');
+  if (totalEl) totalEl.textContent = total>=60?`${Math.floor(total/60)}h ${total%60}m logged`:`${total}m logged`;
+  const entries = Object.entries(byArea).sort((a,b)=>b[1]-a[1]);
+  if (!entries.length) { el.innerHTML = '<p class="text-sm text-gray">No time logged yet today. Start a timer or brain-dump below.</p>'; return; }
+  const max = Math.max(...entries.map(e=>e[1]),1);
+  el.innerHTML = entries.map(([area,mins]) => {
+    const disp = mins>=60?`${Math.floor(mins/60)}h ${mins%60}m`:`${mins}m`;
+    return `<div class="area-bar-row">
+      <div class="area-bar-label"><span>${esc(area)}</span><span>${disp}</span></div>
+      <div class="area-bar-track"><div class="area-bar-fill" style="width:${Math.round(mins/max*100)}%;background:${TIME_AREA_COLORS[area]||'var(--teal)'}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+// — Timer (single at a time, survives refresh via localStorage) —
+function startTimer(chipIdx) {
+  if (state.timer) { toast('Stop the running timer first'); return; }
+  const c = TIMER_CHIPS[chipIdx];
+  state.timer = {area:c.area, label:c.label, note:c.note, startTs:Date.now()};
+  localStorage.setItem('kat-timer', JSON.stringify(state.timer));
+  renderTimerBanner();
+}
+function stopTimer() {
+  if (!state.timer) return;
+  const mins = Math.round((Date.now()-state.timer.startTs)/60000);
+  const {area, label, note} = state.timer;
+  clearTimerState();
+  if (mins < 1) { toast('Timer under 1 min — not logged'); renderTimerBanner(); return; }
+  const fields = {Date: state.dayKey, Area:[area], Minutes:mins, Note: note || label.replace(/^[^A-Za-z]+/,'')};
+  AT.logTime(fields).then(()=>{ loadTimeLogs(); renderWorkBar(); toast(`Logged ${mins}m · ${area}`); })
+    .catch(e=>toast('Error logging time: '+e.message));
+}
+function cancelTimer() { clearTimerState(); renderTimerBanner(); toast('Timer cancelled'); }
+function clearTimerState() {
+  state.timer = null;
+  localStorage.removeItem('kat-timer');
+  if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval=null; }
+}
+function renderTimerBanner() {
+  const banner = document.getElementById('timer-banner');
+  if (!banner) return;
+  if (!state.timer) { banner.style.display='none'; if(state.timerInterval){clearInterval(state.timerInterval);state.timerInterval=null;} return; }
+  banner.style.display='flex';
+  document.getElementById('timer-banner-label').textContent = state.timer.label + ' · ' + state.timer.area;
+  tickTimer();
+  if (!state.timerInterval) state.timerInterval = setInterval(tickTimer, 1000);
+}
+function tickTimer() {
+  if (!state.timer) return;
+  const s = Math.floor((Date.now()-state.timer.startTs)/1000);
+  const el = document.getElementById('timer-banner-elapsed');
+  if (el) el.textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+}
+function restoreTimer() {
+  const saved = localStorage.getItem('kat-timer');
+  if (saved) { try { state.timer = JSON.parse(saved); renderTimerBanner(); } catch(e){} }
+}
+
+// — Brain-dump parser —
+const BRAINDUMP_AREA_MAP = {
+  'health and fitness':'Health & Fitness','health & fitness':'Health & Fitness','health':'Health & Fitness',
+  'exercise':'Health & Fitness','workout':'Health & Fitness','worked out':'Health & Fitness','walk':'Health & Fitness','gym':'Health & Fitness',
+  'work work':'Work Work','work':'Work Work','emails':'Work Work','email':'Work Work','meeting':'Work Work','meetings':'Work Work','innopharm':'Work Work',
+  'speckled dog':'Business','business':'Business',
+  'learning':'Learning','learn':'Learning','reading':'Learning','study':'Learning',
+  'creative':'Creative','drawing':'Creative','writing':'Creative','art':'Creative',
+  'rest':'Rest','resting':'Rest','break':'Rest',
+  'relationships':'Relationships','family':'Relationships','friends':'Relationships',
+  'admin':'Admin','buffer':'Buffer','misc':'Misc','miscellaneous':'Misc'
+};
+function detectArea(piece) {
+  const keys = Object.keys(BRAINDUMP_AREA_MAP).sort((a,b)=>b.length-a.length);
+  for (const k of keys) { if (piece.includes(k)) return BRAINDUMP_AREA_MAP[k]; }
+  return null;
+}
+function parseBrainDump(text) {
+  const t = (text||'').toLowerCase().replace(/\s+/g,' ').trim();
+  if (!t) return [];
+  // Split into clauses on commas, "and", "then", "also", semicolons
+  const pieces = t.split(/[,;]|\band then\b|\bthen\b|\band also\b|\balso\b|\band\b/).map(p=>p.trim()).filter(Boolean);
+  const entries = [];
+  for (const p of pieces) {
+    const mins = parseMinutes(p);
+    const area = detectArea(p);
+    if (mins && area) entries.push({area, minutes:mins, note:''});
+  }
+  return entries;
+}
+let pendingBrainDump = [];
+function logBrainDump() {
+  const text = document.getElementById('braindump-input').value;
+  const entries = parseBrainDump(text);
+  if (!entries.length) { toast('Couldn\'t parse — try "two hours work, half hour emails"'); return; }
+  pendingBrainDump = entries;
+  renderBrainDumpRows();
+  document.getElementById('braindump-confirm').style.display='block';
+}
+function renderBrainDumpRows() {
+  document.getElementById('braindump-rows').innerHTML = pendingBrainDump.map((e,i) => `
+    <div class="flex gap8" style="margin-bottom:6px;align-items:center">
+      <select class="field-select" style="flex:1" onchange="pendingBrainDump[${i}].area=this.value">
+        ${TIMELOG_AREAS.map(a=>`<option${a===e.area?' selected':''}>${a}</option>`).join('')}
+      </select>
+      <input class="field-num" type="number" min="1" step="5" value="${e.minutes}" style="width:64px" onchange="pendingBrainDump[${i}].minutes=parseInt(this.value)||0"/>
+      <span class="text-sm text-gray">min</span>
+      <button class="icon-btn" style="width:30px;height:30px" onclick="removeBrainDumpRow(${i})" title="Remove">✕</button>
+    </div>`).join('');
+}
+function addBrainDumpRow() { pendingBrainDump.push({area:'Work Work', minutes:30, note:''}); renderBrainDumpRows(); }
+function removeBrainDumpRow(i) { pendingBrainDump.splice(i,1); renderBrainDumpRows(); if(!pendingBrainDump.length) cancelBrainDump(); }
+function cancelBrainDump() {
+  pendingBrainDump = [];
+  document.getElementById('braindump-confirm').style.display='none';
+}
+async function confirmBrainDump() {
+  const valid = pendingBrainDump.filter(e=>e.area&&e.minutes>0);
+  if (!valid.length) { toast('Nothing to log'); return; }
+  let ok=0;
+  for (const e of valid) {
+    try { await AT.logTime({Date:state.dayKey, Area:[e.area], Minutes:e.minutes, Note:e.note||'Brain-dump'}); ok++; }
+    catch(err) { toast('Error: '+err.message); }
+  }
+  document.getElementById('braindump-input').value='';
+  cancelBrainDump();
+  await loadTimeLogs();
+  renderWorkBar();
+  toast(`Logged ${ok} time ${ok===1?'entry':'entries'}`);
 }
 
 // ─── Pillars ───────────────────────────────────────────────────
@@ -1584,6 +1806,17 @@ async function applyTaskDone(id, done, actualMins) {
     if (t) {
       t.fields.Status = done?'Done':'Todo';
       if (done && actualMins) t.fields['Actual Minutes'] = actualMins;
+      // Auto-log to Time Log so completed tasks feed the daily ledger
+      if (done) {
+        const mins = actualMins || t.fields['Estimated Minutes'] || 0;
+        const area = Array.isArray(t.fields.Area) ? t.fields.Area[0] : t.fields.Area;
+        if (mins > 0 && area && TIMELOG_AREAS.includes(area)) {
+          try {
+            await AT.logTime({Date: state.dayKey, Area:[area], Minutes:mins, Note:'Task: '+(t.fields.Name||'')});
+            await loadTimeLogs();
+          } catch(e) { /* ledger best-effort */ }
+        }
+      }
     }
     renderTodayTasks(); renderAllTasks(); renderWorkBar(); checkStaleTasks();
   } catch(e) { toast('Error: '+e.message); }
