@@ -1317,7 +1317,7 @@ function stopTimer() {
   const {area, label, note} = state.timer;
   clearTimerState();
   if (mins < 1) { toast('Timer under 1 min — not logged'); renderTimerBanner(); return; }
-  const fields = {Date: state.dayKey, Area:[area], Minutes:mins, Note: note || label.replace(/^[^A-Za-z]+/,'')};
+  const fields = {Date: state.dayKey, Area: area, Minutes:mins, Note: note || label.replace(/^[^A-Za-z]+/,'')};
   AT.logTime(fields).then(()=>{ loadTimeLogs(); renderWorkBar(); toast(`Logged ${mins}m · ${area}`); })
     .catch(e=>toast('Error logging time: '+e.message));
 }
@@ -1353,7 +1353,7 @@ const BRAINDUMP_AREA_MAP = {
   'exercise':'Health & Fitness','workout':'Health & Fitness','worked out':'Health & Fitness','walk':'Health & Fitness','gym':'Health & Fitness',
   'work work':'Work Work','work':'Work Work','emails':'Work Work','email':'Work Work','meeting':'Work Work','meetings':'Work Work','innopharm':'Work Work',
   'speckled dog':'Business','business':'Business',
-  'learning':'Learning','learn':'Learning','reading':'Learning','study':'Learning',
+  'learning':'Learning','learn':'Learning','reading':'Learning','read':'Learning','study':'Learning','course':'Learning',
   'creative':'Creative','drawing':'Creative','writing':'Creative','art':'Creative',
   'rest':'Rest','resting':'Rest','break':'Rest',
   'relationships':'Relationships','family':'Relationships','friends':'Relationships',
@@ -1367,8 +1367,9 @@ function detectArea(piece) {
 function parseBrainDump(text) {
   const t = (text||'').toLowerCase().replace(/\s+/g,' ').trim();
   if (!t) return [];
-  // Split into clauses on commas, "and", "then", "also", semicolons
-  const pieces = t.split(/[,;]|\band then\b|\bthen\b|\band also\b|\balso\b|\band\b/).map(p=>p.trim()).filter(Boolean);
+  // Split into clauses on commas, "and", "then", "also", semicolons.
+  // Don't split the "and" inside "an hour and a half" (negative lookahead).
+  const pieces = t.split(/[,;]|\bthen\b|\balso\b|\band\b(?!\s+a\s+half)/).map(p=>p.trim()).filter(Boolean);
   const entries = [];
   for (const p of pieces) {
     const mins = parseMinutes(p);
@@ -1408,7 +1409,7 @@ async function confirmBrainDump() {
   if (!valid.length) { toast('Nothing to log'); return; }
   let ok=0;
   for (const e of valid) {
-    try { await AT.logTime({Date:state.dayKey, Area:[e.area], Minutes:e.minutes, Note:e.note||'Brain-dump'}); ok++; }
+    try { await AT.logTime({Date:state.dayKey, Area:e.area, Minutes:e.minutes, Note:e.note||'Brain-dump'}); ok++; }
     catch(err) { toast('Error: '+err.message); }
   }
   document.getElementById('braindump-input').value='';
@@ -1812,7 +1813,7 @@ async function applyTaskDone(id, done, actualMins) {
         const area = Array.isArray(t.fields.Area) ? t.fields.Area[0] : t.fields.Area;
         if (mins > 0 && area && TIMELOG_AREAS.includes(area)) {
           try {
-            await AT.logTime({Date: state.dayKey, Area:[area], Minutes:mins, Note:'Task: '+(t.fields.Name||'')});
+            await AT.logTime({Date: state.dayKey, Area: area, Minutes:mins, Note:'Task: '+(t.fields.Name||'')});
             await loadTimeLogs();
           } catch(e) { /* ledger best-effort */ }
         }
