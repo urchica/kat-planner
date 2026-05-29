@@ -1398,9 +1398,10 @@ function closeEditTask() {
 }
 async function saveEditTask() {
   if (!editingTaskId) return;
+  const areaVal = document.getElementById('edit-task-area').value;
   const fields = {
     Name: document.getElementById('edit-task-name').value.trim(),
-    Area: document.getElementById('edit-task-area').value||undefined,
+    Area: areaVal?[areaVal]:undefined,
     Priority: document.getElementById('edit-task-priority').value||undefined,
     Status: document.getElementById('edit-task-status').value||'Todo'
   };
@@ -2092,7 +2093,7 @@ async function createVoiceTasks(segments, targetDate, owner) {
     const parsed = parseTaskSegment(seg);
     if (!parsed) continue;
     const fields = { Name: parsed.name, Status: 'Todo' };
-    if (parsed.area) fields.Area = parsed.area;
+    if (parsed.area) fields.Area = [parsed.area];
     if (parsed.priority) fields.Priority = parsed.priority;
     if (parsed.minutes) fields['Estimated Minutes'] = parsed.minutes;
     if (targetDate) fields['Target Date'] = targetDate;
