@@ -1987,7 +1987,7 @@ async function applyPageVoice(transcript, tab) {
       toast('Creating ' + daySegs.length + ' task' + (daySegs.length>1?'s':'') + '…', 2000);
       const today = new Date().toISOString().slice(0,10);
       const result = await createVoiceTasks(daySegs, today, null);
-      if (result.created) { await loadTasks(); renderTaskList(); updates.push(result.created + ' task' + (result.created>1?'s':'') + ' added'); }
+      if (result.created) { await loadTasks(); renderTodayTasks(); updates.push(result.created + ' task' + (result.created>1?'s':'') + ' added'); }
       if (result.errors.length) result.errors.forEach(e => toast('⚠ '+e, 5000));
     }
   }
@@ -1997,7 +1997,7 @@ async function applyPageVoice(transcript, tab) {
     if (taskSegs.length) {
       toast('Creating ' + taskSegs.length + ' task' + (taskSegs.length>1?'s':'') + '…', 2000);
       const result = await createVoiceTasks(taskSegs, null, null);
-      if (result.created) { await loadTasks(); renderTaskList(); updates.push(result.created + ' task' + (result.created>1?'s':'') + ' added'); }
+      if (result.created) { await loadTasks(); renderAllTasks(); updates.push(result.created + ' task' + (result.created>1?'s':'') + ' added'); }
       if (result.errors.length) result.errors.forEach(e => toast('⚠ '+e, 5000));
     }
   }
