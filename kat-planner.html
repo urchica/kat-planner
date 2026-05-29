@@ -1789,10 +1789,10 @@ function populateDropdowns() {
 
 // ─── Page-level voice ──────────────────────────────────────────
 const PAGE_VOICE_HINTS = {
-  day:    'Use these keywords:\n"level 2" — sets your day level\n"priority 1 [what it is]" — sets a priority\n"add task [name] area [area] minutes [n]" — adds a task\nExample: "level 2. priority 1 finish the board report. add task call dentist area health 30 minutes."',
-  tasks:  'Start with "add task" then the name, then any extras:\n"add task [name] area [area] priority Q2 minutes [n]"\nExample: "add task write annotated report area business priority Q1 90 minutes."',
+  day:    'Tasks are saved automatically — say "add task" before each one:\n"add task [name] area [area] minutes [n]"\n\nMultiple tasks: "add task call dentist area health 30 minutes. add task write board report area business 90 minutes."\n\nAlso: "level 2" · "priority 1 finish the report"',
+  tasks:  'Tasks are saved automatically — say "add task" before each one:\n"add task [name] area [area] priority Q2 minutes [n]"\n\nMultiple tasks: "add task call dentist area health 30 minutes. add task write report area business priority Q1 90 minutes."',
   log:    'Pillars: "mental focus 3" · "emotional energy 4" · "physical energy 2" · "life fuel 3" · "community 5"\nReflection: "what worked [text]" · "what to change [text]" · "notes [text]" · "day rating 4"\nSymptoms: "symptom fatigue" · "severity 3" · "impact mild" · "duration two hours" · "trigger stress" · "action rested"',
-  sprint: 'Use these keywords:\n"add task [name]" · "add goal [name]" · "add project [name]"\nExample: "add task write the proposal. add goal launch website by June."',
+  sprint: 'Sprint tasks saved automatically — say "add task" before each one:\n"add task [name]"\n\nAlso: "add goal [name]" · "add project [name]"',
   week:   ''
 };
 
@@ -1830,40 +1830,94 @@ function setPillarDirect(name, val) {
   saveLocalState();
 }
 
-function applyTaskExtras(t, ctx) {
-  // Area matching
-  const AREAS = ['work work','business','health & fitness','health and fitness','health','learning','creative','rest','relationships','admin'];
-  const AREA_MAP = {'health and fitness':'Health & Fitness','health':'Health & Fitness','work work':'Work Work','business':'Business','learning':'Learning','creative':'Creative','rest':'Rest','relationships':'Relationships','admin':'Admin'};
-  const areaT = extractSection(t,'area',['minutes','mins','priority','add task','task']);
-  if (areaT) {
-    const matched = AREAS.find(a => areaT.startsWith(a));
-    if (matched) {
-      const mapped = AREA_MAP[matched]||matched.split(' ').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
-      const el = document.getElementById(`${ctx}-task-area`);
-      if (el) { el.value = mapped; if(!document.getElementById(`${ctx}-task-fields`).classList.contains('visible')) toggleDayFields&&toggleDayFields()||toggleAllFields&&toggleAllFields(); }
-    }
-  }
-  // Priority
-  const prioT = extractSection(t,'priority',['minutes','mins','area','add task','task']);
-  if (prioT) {
-    const pm={'q1':'Q1 Do Now','q2':'Q2 Schedule','q3':'Q3 Delegate','q4':'Q4 Drop','1':'Q1 Do Now','2':'Q2 Schedule','3':'Q3 Delegate','4':'Q4 Drop','one':'Q1 Do Now','two':'Q2 Schedule','three':'Q3 Delegate','four':'Q4 Drop'};
-    const key = prioT.split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g,'');
-    const pEl = document.getElementById(`${ctx}-task-priority`);
-    if (pEl && pm[key]) pEl.value = pm[key];
-  }
-  // Minutes
-  const minsT = extractSection(t,'minutes',['area','priority','add task','task'])||extractSection(t,'mins',['area','priority','add task','task']);
-  if (minsT) {
-    const n = wordToNum(minsT.split(/\s+/)[0]);
-    const mEl = document.getElementById(`${ctx}-task-mins`);
-    if (mEl && n && n > 0) mEl.value = n;
-  }
-  // Show the extras fields if anything was filled
-  const fieldsEl = document.getElementById(`${ctx}-task-fields`);
-  if (fieldsEl && (areaT||prioT||minsT) && !fieldsEl.classList.contains('visible')) fieldsEl.classList.add('visible');
+const AREA_MAP = {
+  'health and fitness':'Health & Fitness','health & fitness':'Health & Fitness','health':'Health & Fitness',
+  'work work':'Work Work','business':'Business','learning':'Learning',
+  'creative':'Creative','rest':'Rest','relationships':'Relationships','admin':'Admin'
+};
+const PRIO_MAP = {
+  'q1':'Q1 Do Now','q2':'Q2 Schedule','q3':'Q3 Delegate','q4':'Q4 Drop',
+  '1':'Q1 Do Now','2':'Q2 Schedule','3':'Q3 Delegate','4':'Q4 Drop',
+  'one':'Q1 Do Now','two':'Q2 Schedule','three':'Q3 Delegate','four':'Q4 Drop'
+};
+
+function getAllTaskSegments(transcript) {
+  // Split on "add task" / "add tasks" occurrences; discard text before first one
+  const parts = transcript.split(/\badd tasks?\b/gi).slice(1);
+  return parts.map(p => p.trim()).filter(Boolean);
 }
 
-function applyPageVoice(transcript, tab) {
+function parseTaskSegment(segment) {
+  const t = segment.toLowerCase().replace(/[,\.!?]/g,' ').replace(/\s+/g,' ').trim();
+  const FIELD_STOPS = ['area','priority','minutes','mins','hours'];
+
+  // Name = everything before the first field keyword
+  let nameEnd = t.length;
+  for (const s of FIELD_STOPS) {
+    const si = t.indexOf(' '+s+' ');
+    if (si > 0 && si < nameEnd) nameEnd = si;
+  }
+  const name = cap(t.slice(0, nameEnd).trim());
+  if (!name) return null;
+
+  // Area
+  let area = null;
+  const areaIdx = t.indexOf(' area ');
+  if (areaIdx !== -1) {
+    const areaAfter = t.slice(areaIdx + 6).trim();
+    const matched = Object.keys(AREA_MAP).sort((a,b)=>b.length-a.length).find(k => areaAfter.startsWith(k));
+    if (matched) area = AREA_MAP[matched];
+  }
+
+  // Priority (look for "priority q2" or "priority 2" etc.)
+  let priority = null;
+  const prioIdx = t.indexOf(' priority ');
+  if (prioIdx !== -1) {
+    const prioAfter = t.slice(prioIdx + 10).trim();
+    const key = prioAfter.split(/\s+/)[0].replace(/[^a-z0-9]/g,'');
+    if (PRIO_MAP[key]) priority = PRIO_MAP[key];
+  }
+
+  // Minutes (e.g. "30 minutes" or "minutes 30" or "90 mins")
+  let minutes = null;
+  const minMatch = t.match(/(\d+)\s*(?:minutes?|mins?)/);
+  if (minMatch) minutes = parseInt(minMatch[1]);
+  else {
+    const minIdx = t.search(/\bminutes?\b|\bmins?\b/);
+    if (minIdx !== -1) {
+      const before = t.slice(0, minIdx).trim().split(/\s+/).pop();
+      const n = wordToNum(before);
+      if (n && n > 0) minutes = n;
+    }
+  }
+
+  return { name, area, priority, minutes };
+}
+
+async function createVoiceTasks(segments, targetDate, owner) {
+  if (!segments.length) return 0;
+  let created = 0;
+  const errors = [];
+  for (const seg of segments) {
+    const parsed = parseTaskSegment(seg);
+    if (!parsed) continue;
+    const fields = { Name: parsed.name, Status: 'Todo' };
+    if (parsed.area) fields.Area = parsed.area;
+    if (parsed.priority) fields.Priority = parsed.priority;
+    if (parsed.minutes) fields['Estimated Minutes'] = parsed.minutes;
+    if (targetDate) fields['Target Date'] = targetDate;
+    if (owner) fields.Person = owner;
+    try {
+      await AT.createTask(fields);
+      created++;
+    } catch(e) {
+      errors.push(parsed.name + ': ' + (e.message||'error'));
+    }
+  }
+  return { created, errors };
+}
+
+async function applyPageVoice(transcript, tab) {
   const t = transcript.toLowerCase().replace(/[,\.!?]/g,' ').replace(/\s+/g,' ').trim();
   const updates = [];
 
@@ -1928,24 +1982,40 @@ function applyPageVoice(transcript, tab) {
       if(val&&state.priorities[idx]!==undefined){state.priorities[idx].text=cap(val);renderPriorities();saveLocalState();updates.push(`Priority ${idx+1}`);}
     });
 
-    const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
-    if(taskT){
-      const el=document.getElementById('day-task-input'); el.value=cap(taskT); autoResize(el);
-      applyTaskExtras(t,'day'); updates.push('Task ready — tap + to save');
+    const daySegs = getAllTaskSegments(transcript);
+    if (daySegs.length) {
+      toast('Creating ' + daySegs.length + ' task' + (daySegs.length>1?'s':'') + '…', 2000);
+      const today = new Date().toISOString().slice(0,10);
+      const result = await createVoiceTasks(daySegs, today, null);
+      if (result.created) { await loadTasks(); renderTaskList(); updates.push(result.created + ' task' + (result.created>1?'s':'') + ' added'); }
+      if (result.errors.length) result.errors.forEach(e => toast('⚠ '+e, 5000));
     }
   }
 
   if (tab === 'tasks') {
-    const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
-    if(taskT){
-      const el=document.getElementById('all-task-input'); el.value=cap(taskT); autoResize(el);
-      applyTaskExtras(t,'all'); updates.push('Task ready — tap + to save');
+    const taskSegs = getAllTaskSegments(transcript);
+    if (taskSegs.length) {
+      toast('Creating ' + taskSegs.length + ' task' + (taskSegs.length>1?'s':'') + '…', 2000);
+      const result = await createVoiceTasks(taskSegs, null, null);
+      if (result.created) { await loadTasks(); renderTaskList(); updates.push(result.created + ' task' + (result.created>1?'s':'') + ' added'); }
+      if (result.errors.length) result.errors.forEach(e => toast('⚠ '+e, 5000));
     }
   }
 
   if (tab === 'sprint') {
-    const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
-    if(taskT){document.getElementById('new-stask-name-kat').value=cap(taskT);if(document.getElementById('add-sprint-task-kat').style.display==='none')toggleAddSprintTask('kat');updates.push('Sprint task ready — tap Add');}
+    const sprintSegs = getAllTaskSegments(transcript);
+    if (sprintSegs.length) {
+      toast('Creating ' + sprintSegs.length + ' sprint task' + (sprintSegs.length>1?'s':'') + '…', 2000);
+      let created = 0;
+      for (const seg of sprintSegs) {
+        const parsed = parseTaskSegment(seg);
+        if (!parsed) continue;
+        const fields = { Name: parsed.name, Owner: 'Kat', Sprint: sprintState.num, Status: 'Todo' };
+        try { const r = await AT.createSprintTask(fields); sprintState.tasks.push(r.records[0]); created++; }
+        catch(e) { toast('⚠ '+parsed.name+': '+e.message, 5000); }
+      }
+      if (created) { renderSprintTasks(); updates.push(created + ' sprint task' + (created>1?'s':'') + ' added'); }
+    }
     const goalT=extractSection(t,'add goal',STOPS)||extractSection(t,'goal',STOPS);
     if(goalT){document.getElementById('new-goal-name').value=cap(goalT);if(document.getElementById('add-goal-form').style.display==='none')toggleAddGoal();updates.push('Goal ready — tap Add goal');}
     const projT=extractSection(t,'add project',STOPS)||extractSection(t,'project',STOPS);
@@ -1989,7 +2059,7 @@ function toggleGlobalVoice() {
   r.onend = () => {
     state.voiceActive=null; btn.classList.remove('active','voice-pulse');
     overlay.style.display='none';
-    if(finalTranscript.trim()) applyPageVoice(finalTranscript.trim(), activeTab);
+    if(finalTranscript.trim()) applyPageVoice(finalTranscript.trim(), activeTab).catch(e=>toast('Voice error: '+e.message));
   };
   r.onerror = e => {
     state.voiceActive=null; btn.classList.remove('active','voice-pulse');
