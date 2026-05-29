@@ -174,6 +174,13 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 .balance-track{position:relative;background:var(--gray-light);border-radius:4px;height:8px}
 .balance-fill{height:8px;border-radius:4px;background:var(--teal);transition:width .4s}
 .balance-marker{position:absolute;top:-2px;width:2px;height:12px;background:#4A3F37;border-radius:1px}
+/* Today's plan */
+.plan-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.plan-chip{display:flex;flex-direction:column;align-items:center;padding:7px 12px;border-radius:10px;background:var(--bg);border:1px solid var(--border);min-width:64px}
+.plan-chip .pc-area{font-size:11px;color:var(--gray);font-weight:600}
+.plan-chip .pc-hrs{font-size:16px;font-weight:700;color:var(--black)}
+.plan-chip.pc-protect{border-color:var(--teal);background:var(--teal-light)}
+.plan-note{font-size:12px;color:var(--gray);line-height:1.5}
 
 /* Setup */
 #setup{position:fixed;inset:0;background:var(--white);display:flex;align-items:center;justify-content:center;z-index:100;padding:24px}
@@ -290,6 +297,15 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <div class="work-bar-wrap"><div class="work-bar" id="work-bar" style="width:0%"></div></div>
           <div class="work-label"><span id="work-done-label">0m done</span><span id="work-ceiling-label">Ceiling: 7.5 hrs</span></div>
         </div>
+      </div>
+
+      <!-- Today's plan -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--amber)"></span>Today's plan</span>
+          <button class="btn btn-ghost btn-sm" onclick="openReplan()">↻ Re-plan</button>
+        </div>
+        <div class="card-body" id="day-plan-body"><!-- rendered by JS --></div>
       </div>
 
       <!-- Time today -->
@@ -812,6 +828,45 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
   </div>
 </div>
 
+<!-- Re-plan (mid-day re-projection) modal -->
+<div class="modal-bg" id="replan-modal" style="display:none" onclick="if(event.target===this)closeReplan()">
+  <div class="modal">
+    <div class="modal-title">Re-plan the rest of today</div>
+    <div class="matrix-suggestion" id="replan-context" style="display:block;margin-top:0"></div>
+    <div class="matrix-q">
+      <div class="matrix-q-label">How are you feeling now?</div>
+      <div class="matrix-opts" id="rq-feeling">
+        <button class="matrix-opt" onclick="setReplan('feeling','good',this)">Good</button>
+        <button class="matrix-opt" onclick="setReplan('feeling','ok',this)">OK</button>
+        <button class="matrix-opt" onclick="setReplan('feeling','drained',this)">Drained</button>
+      </div>
+    </div>
+    <div class="matrix-q">
+      <div class="matrix-q-label">Focused time left today?</div>
+      <div class="matrix-opts" id="rq-time">
+        <button class="matrix-opt" onclick="setReplan('time','auto',this)">Use clock</button>
+        <button class="matrix-opt" onclick="setReplan('time',180,this)">~3h+</button>
+        <button class="matrix-opt" onclick="setReplan('time',120,this)">~2h</button>
+        <button class="matrix-opt" onclick="setReplan('time',60,this)">~1h</button>
+        <button class="matrix-opt" onclick="setReplan('time',30,this)">&lt;1h</button>
+      </div>
+    </div>
+    <div class="matrix-q">
+      <div class="matrix-q-label">Priority for the rest of the day?</div>
+      <div class="matrix-opts" id="rq-focus">
+        <button class="matrix-opt" onclick="setReplan('focus','deep',this)">Finish deep work</button>
+        <button class="matrix-opt" onclick="setReplan('focus','essentials',this)">Essentials + email</button>
+        <button class="matrix-opt" onclick="setReplan('focus','winddown',this)">Wind down</button>
+      </div>
+    </div>
+    <div class="matrix-suggestion" id="replan-result" style="display:none"></div>
+    <div class="flex gap8 mt8">
+      <button class="btn btn-primary" style="flex:1" onclick="applyReplan()" id="replan-apply-btn" disabled>Apply</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="closeReplan()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Done modal -->
 <div class="modal-bg" id="done-modal" style="display:none" onclick="if(event.target===this){document.getElementById('done-modal').style.display='none';pendingDone=null}">
   <div class="modal" style="max-height:unset">
@@ -1130,6 +1185,7 @@ async function initApp() {
   renderPriorities();
   renderMeetings();
   renderWorkBar();
+  renderDayPlan();
   renderTimerChips();
   restoreTimer();
   await loadTasks();
@@ -1221,14 +1277,14 @@ function setLevel(l) {
   renderPriorities();
   renderWorkBar();
   renderTodayTasks();
+  renderDayPlan();
   saveLocalState();
   toast(`Switched to ${lc.label}`);
 }
 
 // ─── Work Bar ──────────────────────────────────────────────────
 // Work-hour ceiling derived from the day's schedule. L1 = the day's full
-// planned work hours; lower levels scale that base down (interim rules —
-// the balance-aware allocation lands in build step 4).
+// planned work hours; lower levels scale that base down.
 function currentWorkCeiling() {
   const day = SCHEDULE.days[todaySchedKey()];
   if (!day) return LEVEL_CONFIG[state.level].workHrs; // weekend / no template
@@ -1240,6 +1296,164 @@ function currentWorkCeiling() {
     case 4: return 1;                              // emails only
     default: return base;
   }
+}
+
+// ─── Day plan: level scaling + balance-aware Business/Exercise ───
+const round2 = n => Math.round(n*2)/2; // nearest half-hour
+function computeDayPlan(level) {
+  const day = SCHEDULE.days[todaySchedKey()];
+  const work = currentWorkCeiling();
+  const fl = SCHEDULE.floors || {business:1, exercise:1};
+  if (!day) return {work, business:0, exercise:0, level, weekend:true, protect:null,
+    note:'No work-day template today — treat as flexible / rest.'};
+
+  let business, exercise, protect = null, note = '';
+  if (level === 1) {
+    business = day.business; exercise = day.exercise;
+    note = 'Full day — work, business and exercise all at planned hours.';
+  } else if (level === 4) {
+    business = 0; exercise = 0;
+    note = 'Survival — just the work essentials, then rest. Floors suspended.';
+  } else {
+    const factor = level === 2 ? 0.6 : 0.4;
+    business = Math.max(fl.business, round2(day.business * factor));
+    exercise = Math.max(fl.exercise, round2(day.exercise * factor));
+    // Balance-aware nudge: shift up to ½h from the area that's ahead of pace
+    // toward the one that's behind (never below its floor). Never zero either out.
+    const bal = computeWeeklyBalance();
+    const bB = bal.buckets.find(b=>b.label==='Business');
+    const eB = bal.buckets.find(b=>b.label==='Exercise');
+    if (bB && eB) {
+      if (bB.deficit > 0.5 && eB.deficit < -0.5 && exercise-0.5 >= fl.exercise) {
+        exercise -= 0.5; business += 0.5; protect = 'Business';
+      } else if (eB.deficit > 0.5 && bB.deficit < -0.5 && business-0.5 >= fl.business) {
+        business -= 0.5; exercise += 0.5; protect = 'Exercise';
+      } else {
+        protect = (eB.deficit >= bB.deficit) ? 'Exercise' : 'Business';
+      }
+    }
+    note = `Lighter day — work scaled to ${work}h; business & exercise held at their floors (${fl.business}h / ${fl.exercise}h).`;
+  }
+  return {work, business, exercise, level, weekend:false, protect, note};
+}
+
+function renderDayPlan() {
+  const el = document.getElementById('day-plan-body');
+  if (!el) return;
+  const p = computeDayPlan(state.level);
+  const lc = LEVEL_CONFIG[state.level];
+  const chip = (area, hrs) => `<div class="plan-chip${p.protect===area?' pc-protect':''}">
+    <span class="pc-area">${area}${p.protect===area?' ⚖️':''}</span><span class="pc-hrs">${hrs}h</span></div>`;
+  let chips = chip('Work', p.work);
+  if (!p.weekend) { chips += chip('Business', p.business) + chip('Exercise', p.exercise); }
+  el.innerHTML = `<div class="text-sm text-gray" style="margin-bottom:6px"><strong style="color:var(--black)">${lc.label}</strong></div>
+    <div class="plan-chips">${chips}</div>
+    <div class="plan-note">${esc(p.note)}</div>`;
+}
+
+// ─── Mid-day re-projection ───────────────────────────────────────
+function minutesUntilWrap() {
+  const day = SCHEDULE.days[todaySchedKey()];
+  if (!day) return 0;
+  const [wh,wm] = (day.wrapEnd||'17:30').split(':').map(Number);
+  const wrap = new Date(); wrap.setHours(wh, wm, 0, 0);
+  return Math.max(0, Math.round((wrap - new Date())/60000));
+}
+function workLoggedTodayMins() {
+  return state.timeLogs.filter(l => {
+    const a = Array.isArray(l.fields.Area) ? l.fields.Area[0] : l.fields.Area;
+    return WORK_TODAY_AREAS.includes(a);
+  }).reduce((s,l) => s + (l.fields.Minutes||0), 0);
+}
+function tasksFitting(capacityMins) {
+  const todo = state.tasks.filter(t =>
+    t.fields.Status!=='Done' && t.fields.Status!=='Deferred' && isWorkTask(t) && t.fields['Estimated Minutes']);
+  todo.sort(prioSort);
+  const fit = []; let used = 0;
+  for (const t of todo) {
+    const m = t.fields['Estimated Minutes'];
+    if (used + m <= capacityMins) { fit.push(t); used += m; }
+  }
+  return {fit, used, totalTodo: todo.length};
+}
+
+let replanAns = {};
+function openReplan() {
+  replanAns = {};
+  document.querySelectorAll('#replan-modal .matrix-opt').forEach(b=>b.classList.remove('sel'));
+  document.getElementById('replan-result').style.display = 'none';
+  document.getElementById('replan-apply-btn').disabled = true;
+  const minsLeft = minutesUntilWrap();
+  const logged = workLoggedTodayMins();
+  const day = SCHEDULE.days[todaySchedKey()];
+  const wrapTxt = day ? day.wrapEnd : '—';
+  document.getElementById('replan-context').innerHTML =
+    `<strong>Where you are now</strong>` +
+    `Logged ${fmtMins(logged)} of work so far. ` +
+    (day ? `~${fmtMins(minsLeft)} until wrap (${to12h(wrapTxt)}).` : 'No work-day template today.');
+  document.getElementById('replan-modal').style.display = 'flex';
+}
+function closeReplan() { document.getElementById('replan-modal').style.display = 'none'; }
+
+function setReplan(key, val, el) {
+  replanAns[key] = val;
+  el.closest('.matrix-opts').querySelectorAll('.matrix-opt').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if (replanAns.feeling && replanAns.time && replanAns.focus) renderReplanResult();
+}
+
+function replanSuggestedLevel(feeling, minsLeft, focus) {
+  if (feeling==='drained' || focus==='winddown' || minsLeft < 60) return 4;
+  if (focus==='essentials') return 3;
+  if (feeling==='ok' && minsLeft < 180) return 3;
+  if (minsLeft < 120) return 3;
+  if (feeling==='good' && minsLeft >= 180) return Math.min(state.level, 2) || 2;
+  return 2;
+}
+
+function renderReplanResult() {
+  const minsLeft = replanAns.time === 'auto' ? minutesUntilWrap() : replanAns.time;
+  const level = replanSuggestedLevel(replanAns.feeling, minsLeft, replanAns.focus);
+  replanAns._level = level;
+  const lc = LEVEL_CONFIG[level];
+  const logged = workLoggedTodayMins();
+  const ceilMins = (function(){ const sv=state.level; state.level=level; const c=currentWorkCeiling()*60; state.level=sv; return c; })();
+  // Remaining work capacity = what's left under the (re-projected) ceiling, bounded by clock time.
+  const capacity = Math.max(0, Math.min(minsLeft, ceilMins - logged));
+  const {fit, used, totalTodo} = tasksFitting(capacity);
+  let html = `<strong>Suggested: ${lc.label}</strong>`;
+  html += `<div style="margin-bottom:6px">~${fmtMins(capacity)} of focused work capacity left`;
+  if (ceilMins - logged < minsLeft) html += ` (you're near today's ${fmtMins(ceilMins)} ceiling)`;
+  html += `.</div>`;
+  if (level >= 3 && (replanAns.focus==='winddown' || replanAns.feeling==='drained')) {
+    const rest = (SCHEDULE.activeRest||[]).slice(0,2);
+    html += `<div style="margin-bottom:6px">Then shift to active rest${rest.length?': '+esc(rest.join('; ')):''}.</div>`;
+  }
+  if (capacity >= 5 && totalTodo) {
+    html += fit.length
+      ? `<div style="font-weight:600;margin-top:4px">Fits in the time left:</div><ul style="margin:4px 0 0;padding-left:18px">${fit.map(t=>`<li>${esc(t.fields.Name)} · ${fmtMins(t.fields['Estimated Minutes'])}</li>`).join('')}</ul>`
+      : `<div style="margin-top:4px">No estimated work tasks fit in the remaining time — keep it to emails / quick wins.</div>`;
+  } else if (capacity < 5) {
+    html += `<div style="margin-top:4px">Work ceiling reached — protect the rest of the day for recovery.</div>`;
+  }
+  const r = document.getElementById('replan-result');
+  r.style.display = 'block';
+  r.innerHTML = html;
+  document.getElementById('replan-apply-btn').disabled = false;
+}
+
+function applyReplan() {
+  if (replanAns._level) setLevel(replanAns._level);
+  closeReplan();
+}
+
+// Time helpers
+function fmtMins(m) { m = Math.round(m); return m>=60 ? `${Math.floor(m/60)}h${m%60?' '+(m%60)+'m':''}` : `${m}m`; }
+function to12h(hhmm) {
+  if (!hhmm) return '—';
+  let [h,m] = hhmm.split(':').map(Number);
+  const ap = h>=12 ? 'PM' : 'AM'; h = h%12 || 12;
+  return `${h}:${String(m).padStart(2,'0')} ${ap}`;
 }
 
 // Areas that count toward the day's "work" ceiling (Innopharm work + buffer).
@@ -1298,6 +1512,7 @@ async function loadTimeLogs() {
   renderTimeLedger();
   renderWeeklyBalance();
   renderWorkBar();
+  renderDayPlan();
 }
 
 // ─── Weekly balance (actual vs expected-so-far per area) ─────────
