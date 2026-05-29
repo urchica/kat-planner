@@ -1610,8 +1610,8 @@ function getTodayTasks() {
   return state.tasks.filter(t => {
     if (t.fields.Status==='Done'||t.fields.Status==='Deferred') return false;
     const td = t.fields['Target Date'];
-    if (!td) return false;
-    return td===state.dayKey || td<state.dayKey;
+    if (td) return td===state.dayKey || td<state.dayKey;   // due today or overdue
+    return t.fields['Date Added']===state.dayKey;          // undated, but added today
   });
 }
 
@@ -1819,10 +1819,10 @@ async function saveEditTask() {
     Status: document.getElementById('edit-task-status').value||'Todo'
   };
   const mins = parseInt(document.getElementById('edit-task-mins').value);
-  if (mins>0) fields['Estimated Minutes']=mins; else fields['Estimated Minutes']=undefined;
+  fields['Estimated Minutes'] = mins>0 ? mins : null;        // null clears the field in Airtable
   const dl = document.getElementById('edit-task-deadline').value;
-  if (dl) fields['Target Date']=dl; else fields['Target Date']=undefined;
-  // Remove undefined keys
+  fields['Target Date'] = dl ? dl : null;                    // null clears the deadline
+  // Remove only undefined keys (null is intentional — it clears the field)
   Object.keys(fields).forEach(k=>fields[k]===undefined&&delete fields[k]);
   try {
     await AT.updateTask(editingTaskId, fields);
@@ -1932,13 +1932,15 @@ async function addTask(ctx) {
   const area = document.getElementById(`${ctx}-task-area`)?.value||'';
   const priority = document.getElementById(`${ctx}-task-priority`)?.value||'Q2 Schedule';
   const mins = document.getElementById(`${ctx}-task-mins`)?.value;
-  const targetDate = ctx==='all'?document.getElementById('all-task-date')?.value||state.dayKey:state.dayKey;
+  // Target Date is optional — only set if the user explicitly picks one (Tasks tab date input).
+  const targetDate = ctx==='all' ? (document.getElementById('all-task-date')?.value||'') : '';
   const fields = {
     'Name': text, 'Status': 'Todo', 'Date Added': state.dayKey,
-    'Target Date': targetDate, 'Priority': priority, 'Person': 'Kat'
+    'Priority': priority, 'Person': 'Kat'
   };
   if (area) fields['Area'] = [area];
   if (mins) fields['Estimated Minutes'] = parseInt(mins);
+  if (targetDate) fields['Target Date'] = targetDate;
   try {
     const r = await AT.createTask(fields);
     state.tasks.unshift(r.records[0]);
@@ -2566,7 +2568,7 @@ async function createVoiceTasks(segments, targetDate, owner) {
   for (const seg of segments) {
     const parsed = parseTaskSegment(seg);
     if (!parsed) continue;
-    const fields = { Name: parsed.name, Status: 'Todo' };
+    const fields = { Name: parsed.name, Status: 'Todo', 'Date Added': state.dayKey };
     if (parsed.area) fields.Area = [parsed.area];
     if (parsed.priority) fields.Priority = parsed.priority;
     if (parsed.minutes) fields['Estimated Minutes'] = parsed.minutes;
@@ -2650,8 +2652,7 @@ async function applyPageVoice(transcript, tab) {
     const daySegs = getAllTaskSegments(transcript);
     if (daySegs.length) {
       toast('Creating ' + daySegs.length + ' task' + (daySegs.length>1?'s':'') + '…', 2000);
-      const today = new Date().toISOString().slice(0,10);
-      const result = await createVoiceTasks(daySegs, today, null);
+      const result = await createVoiceTasks(daySegs, null, null);
       if (result.created) { await loadTasks(); renderTodayTasks(); updates.push(result.created + ' task' + (result.created>1?'s':'') + ' added'); }
       if (result.errors.length) result.errors.forEach(e => toast('⚠ '+e, 5000));
     }
