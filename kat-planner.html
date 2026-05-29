@@ -507,7 +507,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <div class="form-row">
               <span class="form-label">Impact</span>
               <select class="form-select" id="sym-impact">
-                <option>Minimal</option><option>Moderate</option><option>Significant</option>
+                <option>Mild</option><option>Moderate</option><option>Severe</option>
               </select>
             </div>
             <div class="form-row">
@@ -841,13 +841,13 @@ const AT = {
   async updateTask(id,fields) { return this.call('PATCH','Tasks',{records:[{id,fields}]}); },
   async deleteTask(id) { return this.call('DELETE',`Tasks/${id}`); },
   async getDailyLog(date) {
-    const r = await this.call('GET',`Daily%20Logs?filterByFormula=${encodeURIComponent(`{Date}='${date}'`)}`);
+    const r = await this.call('GET',`Daily%20Log?filterByFormula=${encodeURIComponent(`{Date}='${date}'`)}`);
     return r.records?.[0]||null;
   },
   async saveDailyLog(fields) {
     const ex = await this.getDailyLog(state.dayKey);
-    if (ex) return this.call('PATCH','Daily%20Logs',{records:[{id:ex.id,fields}]});
-    return this.call('POST','Daily%20Logs',{records:[{fields:{Date:state.dayKey,...fields}}]});
+    if (ex) return this.call('PATCH','Daily%20Log',{records:[{id:ex.id,fields}]});
+    return this.call('POST','Daily%20Log',{records:[{fields:{Date:state.dayKey,...fields}}]});
   },
   async logSymptom(fields) { return this.call('POST','Symptoms',{records:[{fields}]}); },
   async getSprintGoals() {
@@ -876,7 +876,7 @@ const AT = {
     return this.call('POST','Sprint%20Reviews',{records:[{fields}]});
   },
   async getWeekLogs(fromDate) {
-    const r = await this.call('GET',`Daily%20Logs?filterByFormula=${encodeURIComponent(`{Date}>='${fromDate}'`)}`);
+    const r = await this.call('GET',`Daily%20Log?filterByFormula=${encodeURIComponent(`{Date}>='${fromDate}'`)}`);
     return r.records||[];
   },
   async verify() {
@@ -1486,7 +1486,7 @@ async function loadWeekData() {
   logs.forEach(l=>{ PILLARS.forEach(p=>{ if(l.fields[p]){ pillarSums[p]=(pillarSums[p]||0)+l.fields[p]; pillarCounts[p]=(pillarCounts[p]||0)+1; } }); });
   document.getElementById('pillar-averages').innerHTML = logs.length
     ? PILLARS.map(p=>{ const avg=pillarCounts[p]?(pillarSums[p]/pillarCounts[p]).toFixed(1):'—'; return `<div class="pillar-row"><div class="pillar-name">${p}</div><div style="font-size:16px;font-weight:700;color:var(--teal)">${avg}</div></div>`; }).join('')
-    : '<p class="text-sm text-gray">Create the Daily Logs table in Airtable to see pillar averages here.</p>';
+    : '<p class="text-sm text-gray">Create the Daily Log table in Airtable to see pillar averages here.</p>';
 }
 
 // ─── Utils ─────────────────────────────────────────────────────
@@ -1792,7 +1792,7 @@ function populateDropdowns() {
 const PAGE_VOICE_HINTS = {
   day:    '"level 2" · "priority 1 finish the report" · "add task call dentist area health 30 minutes"',
   tasks:  '"add task book appointment area health priority Q2 30 minutes"',
-  log:    '"mental focus 3" · "emotional energy 4" · "physical energy 2" · "life fuel 3" · "community 5"\n"what worked got through all my priorities" · "what to change take more breaks" · "day rating 4"\n"symptom fatigue" · "severity 3" · "duration two hours" · "trigger stress" · "action took rest"',
+  log:    '"mental focus 3" · "emotional energy 4" · "physical energy 2" · "life fuel 3" · "community 5"\n"what worked got through all my priorities" · "what to change take more breaks" · "day rating 4"\n"symptom fatigue" · "severity 3" · "impact mild/moderate/severe" · "duration two hours" · "trigger stress" · "action took rest"',
   sprint: '"add task write proposal" · "add goal launch website" · "add project rebrand"',
   week:   ''
 };
@@ -1870,7 +1870,7 @@ function applyPageVoice(transcript, tab) {
 
   const STOPS = ['mental focus','emotional energy','physical energy','life fuel','community',
     'what worked','worked well','what to change','to change','differently','notes','note',
-    'day rating','rating','symptom','severity','duration','trigger','action taken','action',
+    'day rating','rating','symptom','severity','impact','duration','trigger','action taken','action',
     'level','day level','priority one','priority two','priority three',
     'priority 1','priority 2','priority 3','first priority','second priority','third priority',
     'add task','task','add goal','goal','add project','project','meeting',
@@ -1907,6 +1907,8 @@ function applyPageVoice(transcript, tab) {
     }
     const sevT=extractSection(t,'severity',STOPS);
     if(sevT){const n=wordToNum(sevT.split(/\s+/)[0]);if(n&&n>=1&&n<=5){const b=document.querySelector(`[onclick="setSymSev(${n},this)"]`);if(b)setSymSev(n,b);updates.push(`Severity: ${n}`);}}
+    const impT=extractSection(t,'impact',STOPS);
+    if(impT){const iEl=document.getElementById('sym-impact');const iw=impT.split(/\s+/)[0];const im={mild:'Mild',moderate:'Moderate',severe:'Severe'};if(im[iw]){iEl.value=im[iw];updates.push(`Impact: ${im[iw]}`);}}
     const durT=extractSection(t,'duration',STOPS);
     if(durT){document.getElementById('sym-duration').value=cap(durT);updates.push('Duration');}
     const trigT=extractSection(t,'trigger',STOPS);
