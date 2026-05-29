@@ -102,6 +102,7 @@ header{background:var(--white);border-bottom:1px solid var(--border);padding:12p
 .tp-area{background:var(--teal-light);color:var(--teal-dark)}
 .tp-time{background:var(--gray-light);color:var(--gray)}
 .tp-stale{background:var(--red-light);color:#A32D2D}
+#settings-modal input,#settings-modal select{border:1px solid var(--border);border-radius:6px;padding:5px 6px;font-size:13px;background:var(--white);color:var(--black)}
 .tp-overdue{background:#FFD6D6;color:#A32D2D;font-weight:600}
 .tp-soon{background:#FFF3CD;color:#856404;font-weight:600}
 .tp-date{background:#E8F4FD;color:#1565C0}
@@ -259,7 +260,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
     </div>
     <div class="flex gap8 items-center">
       <button class="btn btn-ghost btn-sm" onclick="showMatrix()" id="level-indicator">Level 1 — Full</button>
-      <button class="icon-btn" onclick="signOut()" title="Sign out" style="width:32px;height:32px;font-size:14px">⚙</button>
+      <button class="icon-btn" onclick="openSettings()" title="Settings" style="width:32px;height:32px;font-size:14px">⚙</button>
     </div>
   </header>
 
@@ -767,6 +768,48 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
   </div>
 </div>
 
+<!-- Settings / schedule template modal -->
+<div class="modal-bg" id="settings-modal" style="display:none" onclick="if(event.target===this)closeSettings()">
+  <div class="modal" style="max-height:92vh;overflow-y:auto;max-width:600px">
+    <div class="modal-title">Schedule &amp; Targets</div>
+    <div style="font-size:12px;color:var(--gray);margin-bottom:14px;line-height:1.5">
+      Your weekly plan. Work hours include emails, meetings &amp; the ½h buffer. Everything here is the baseline the planner uses to project task dates and balance your week.
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Daily hours</div>
+    <div style="overflow-x:auto;margin-bottom:18px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px" id="settings-day-table">
+        <thead>
+          <tr style="text-align:left;color:var(--gray);font-size:11px;text-transform:uppercase">
+            <th style="padding:4px 6px">Day</th>
+            <th style="padding:4px 6px">Work</th>
+            <th style="padding:4px 6px">Biz</th>
+            <th style="padding:4px 6px">Exer</th>
+            <th style="padding:4px 6px">Wrap by</th>
+            <th style="padding:4px 6px">Lvl</th>
+          </tr>
+        </thead>
+        <tbody id="settings-day-rows"></tbody>
+      </table>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Weekly targets (hours)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px" id="settings-targets"></div>
+
+    <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Floors</div>
+    <div style="font-size:12px;color:var(--gray);margin-bottom:18px">Business &amp; Exercise won't drop below <b id="settings-floor-biz"></b>h / <b id="settings-floor-ex"></b>h except in Survival mode.</div>
+
+    <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Active rest ideas</div>
+    <ul style="font-size:12px;color:var(--gray);margin:0 0 18px;padding-left:18px;line-height:1.6" id="settings-rest-list"></ul>
+
+    <div class="flex gap8">
+      <button class="btn btn-primary" style="flex:1" onclick="saveSettings()">Save</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="closeSettings()">Cancel</button>
+    </div>
+    <button class="btn btn-ghost" style="width:100%;margin-top:8px;color:#A32D2D" onclick="signOut()">Sign out</button>
+  </div>
+</div>
+
 <!-- Edit task modal -->
 <div class="modal-bg" id="edit-task-modal" style="display:none" onclick="if(event.target===this)closeEditTask()">
   <div class="modal" style="max-height:90vh;overflow-y:auto">
@@ -869,6 +912,48 @@ let sprintState = {
   startDate: localStorage.getItem('kat-sprint-start')||null,
   goals: [], projects: [], tasks: [], review: null
 };
+
+// ─── Schedule template + weekly targets (the planning foundation) ───
+const DEFAULT_SCHEDULE = {
+  // Per weekday. Hours include emails + meetings + ½h buffer for "work".
+  days: {
+    mon: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:2},
+    tue: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:1, defaultLevel:3},
+    wed: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:2, defaultLevel:2},
+    thu: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:2},
+    fri: {start:'07:30', workEnd:'13:00', wrapEnd:'13:30', work:3, business:2, exercise:1, defaultLevel:3}
+  },
+  // Weekly targets (hours). Editable in weekly review.
+  weeklyTargets: {work:25, business:10, exercise:8, admin:1, learning:4, creative:2.5},
+  // Floors — these areas don't drop below this many hours except in Survival (L4).
+  floors: {business:1, exercise:1},
+  // Active-rest suggestions (for L3/L4 + "enough work" moments).
+  activeRest: [
+    'Free-exploration learning (library books — gardening/companion planting right now)',
+    'Drawing while listening to an audiobook',
+    'Garden / yard work',
+    'Reading',
+    'Being outside in any form'
+  ]
+};
+
+let SCHEDULE = loadSchedule();
+function loadSchedule() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('kat-schedule')||'null');
+    if (!saved) return JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
+    // Deep-merge so new default keys appear even on old saved configs
+    return {
+      days: {...JSON.parse(JSON.stringify(DEFAULT_SCHEDULE.days)), ...(saved.days||{})},
+      weeklyTargets: {...DEFAULT_SCHEDULE.weeklyTargets, ...(saved.weeklyTargets||{})},
+      floors: {...DEFAULT_SCHEDULE.floors, ...(saved.floors||{})},
+      activeRest: saved.activeRest||DEFAULT_SCHEDULE.activeRest
+    };
+  } catch(e) { return JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)); }
+}
+function saveSchedule() { localStorage.setItem('kat-schedule', JSON.stringify(SCHEDULE)); }
+const DOW_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+function todaySchedKey() { return DOW_KEYS[new Date().getDay()]; }
 
 // ─── Airtable API ──────────────────────────────────────────────
 const AT = {
@@ -1422,6 +1507,56 @@ async function saveEditTask() {
     renderTodayTasks(); renderAllTasks();
     toast('Task updated');
   } catch(e) { toast('Error: '+e.message); }
+}
+
+// ─── Settings / schedule editor ────────────────────────────────
+const DOW_LABEL = {mon:'Mon',tue:'Tue',wed:'Wed',thu:'Thu',fri:'Fri'};
+const TARGET_LABEL = {work:'Work',business:'Business',exercise:'Exercise',admin:'Admin',learning:'Learning',creative:'Creative'};
+function openSettings() {
+  const rows = ['mon','tue','wed','thu','fri'].map(d => {
+    const s = SCHEDULE.days[d];
+    return `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:5px 6px;font-weight:600">${DOW_LABEL[d]}</td>
+      <td style="padding:5px 6px"><input type="number" step="0.5" min="0" id="sch-${d}-work" value="${s.work}" style="width:46px"/></td>
+      <td style="padding:5px 6px"><input type="number" step="0.5" min="0" id="sch-${d}-business" value="${s.business}" style="width:46px"/></td>
+      <td style="padding:5px 6px"><input type="number" step="0.5" min="0" id="sch-${d}-exercise" value="${s.exercise}" style="width:46px"/></td>
+      <td style="padding:5px 6px"><input type="time" id="sch-${d}-wrapEnd" value="${s.wrapEnd}" style="width:96px"/></td>
+      <td style="padding:5px 6px"><select id="sch-${d}-defaultLevel" style="width:46px">
+        ${[1,2,3,4].map(l=>`<option value="${l}"${s.defaultLevel===l?' selected':''}>${l}</option>`).join('')}
+      </select></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('settings-day-rows').innerHTML = rows;
+
+  const tgt = SCHEDULE.weeklyTargets;
+  document.getElementById('settings-targets').innerHTML = Object.keys(TARGET_LABEL).map(k=>`
+    <div>
+      <label style="font-size:11px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">${TARGET_LABEL[k]}</label>
+      <input type="number" step="0.5" min="0" id="tgt-${k}" value="${tgt[k]!=null?tgt[k]:0}" style="width:100%"/>
+    </div>`).join('');
+
+  document.getElementById('settings-floor-biz').textContent = SCHEDULE.floors.business;
+  document.getElementById('settings-floor-ex').textContent = SCHEDULE.floors.exercise;
+  document.getElementById('settings-rest-list').innerHTML = SCHEDULE.activeRest.map(r=>`<li>${esc(r)}</li>`).join('');
+
+  document.getElementById('settings-modal').style.display='flex';
+}
+function closeSettings() { document.getElementById('settings-modal').style.display='none'; }
+function saveSettings() {
+  ['mon','tue','wed','thu','fri'].forEach(d => {
+    const s = SCHEDULE.days[d];
+    s.work = parseFloat(document.getElementById(`sch-${d}-work`).value)||0;
+    s.business = parseFloat(document.getElementById(`sch-${d}-business`).value)||0;
+    s.exercise = parseFloat(document.getElementById(`sch-${d}-exercise`).value)||0;
+    s.wrapEnd = document.getElementById(`sch-${d}-wrapEnd`).value||s.wrapEnd;
+    s.defaultLevel = parseInt(document.getElementById(`sch-${d}-defaultLevel`).value)||s.defaultLevel;
+  });
+  Object.keys(TARGET_LABEL).forEach(k => {
+    SCHEDULE.weeklyTargets[k] = parseFloat(document.getElementById(`tgt-${k}`).value)||0;
+  });
+  saveSchedule();
+  closeSettings();
+  toast('Schedule saved');
 }
 
 async function applyTaskDone(id, done, actualMins) {
