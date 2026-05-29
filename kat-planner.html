@@ -1242,12 +1242,17 @@ function currentWorkCeiling() {
   }
 }
 
+// Areas that count toward the day's "work" ceiling (Innopharm work + buffer).
+// Business (Speckled Dog) is tracked separately in Weekly balance.
+const WORK_TODAY_AREAS = ['Work Work','Buffer'];
 function renderWorkBar() {
   const ceilHrs = currentWorkCeiling();
   const ceil = ceilHrs * 60;
-  const doneTasks = state.tasks.filter(t => t.fields.Status==='Done' && isWorkTask(t));
-  const doneMins = doneTasks.reduce((s,t) => s+(t.fields['Actual Minutes']||t.fields['Estimated Minutes']||0), 0);
-  const todoWorkMins = state.tasks.filter(t => t.fields.Status!=='Done' && t.fields.Status!=='Deferred' && isWorkTask(t)).reduce((s,t) => s+(t.fields['Estimated Minutes']||0), 0);
+  // Single source of truth: today's Time Log (timer + brain-dump + auto-logged tasks).
+  const doneMins = state.timeLogs.filter(l => {
+    const a = Array.isArray(l.fields.Area) ? l.fields.Area[0] : l.fields.Area;
+    return WORK_TODAY_AREAS.includes(a);
+  }).reduce((s,l) => s + (l.fields.Minutes||0), 0);
   const pct = ceil>0 ? Math.min(100, Math.round(doneMins/ceil*100)) : 0;
   const bar = document.getElementById('work-bar');
   bar.style.width = pct+'%';
@@ -1292,6 +1297,7 @@ async function loadTimeLogs() {
   } catch(e) { state.weekTimeLogs = []; state.timeLogs = []; }
   renderTimeLedger();
   renderWeeklyBalance();
+  renderWorkBar();
 }
 
 // ─── Weekly balance (actual vs expected-so-far per area) ─────────
