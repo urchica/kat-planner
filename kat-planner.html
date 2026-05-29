@@ -402,8 +402,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <div class="flex gap8 items-center">
             <select class="field-select" id="filter-status" onchange="renderAllTasks()">
               <option value="">All status</option>
-              <option value="To Do">To Do</option>
-              <option value="In Progress">In Progress</option>
+              <option value="Todo">To Do</option>
               <option value="Done">Done</option>
               <option value="Deferred">Deferred</option>
             </select>
@@ -768,7 +767,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
     <span style="font-size:11px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em" id="pvo-tab-label">Listening…</span>
     <span style="font-size:11px;color:var(--gray)">Tap 🎤 again to stop</span>
   </div>
-  <div style="font-size:11px;color:var(--gray);margin-bottom:8px;line-height:1.6" id="pvo-hints"></div>
+  <div style="font-size:11px;color:var(--gray);margin-bottom:8px;line-height:1.6;white-space:pre-line" id="pvo-hints"></div>
   <div style="font-size:13px;color:var(--black);min-height:36px;background:var(--gray-light);border-radius:8px;padding:8px 10px;line-height:1.4;font-style:italic" id="pvo-transcript">…</div>
 </div>
 
@@ -1259,12 +1258,12 @@ function skipDone() {
 
 async function applyTaskDone(id, done, actualMins) {
   try {
-    const fields = {Status: done?'Done':'To Do'};
+    const fields = {Status: done?'Done':'Todo'};
     if (done && actualMins) fields['Actual Minutes'] = actualMins;
     await AT.updateTask(id, fields);
     const t = state.tasks.find(t=>t.id===id);
     if (t) {
-      t.fields.Status = done?'Done':'To Do';
+      t.fields.Status = done?'Done':'Todo';
       if (done && actualMins) t.fields['Actual Minutes'] = actualMins;
     }
     renderTodayTasks(); renderAllTasks(); renderWorkBar(); checkStaleTasks();
@@ -1296,7 +1295,7 @@ async function addTask(ctx) {
   const mins = document.getElementById(`${ctx}-task-mins`)?.value;
   const targetDate = ctx==='all'?document.getElementById('all-task-date')?.value||state.dayKey:state.dayKey;
   const fields = {
-    'Name': text, 'Status': 'To Do', 'Date Added': state.dayKey,
+    'Name': text, 'Status': 'Todo', 'Date Added': state.dayKey,
     'Target Date': targetDate, 'Priority': priority, 'Person': 'Kat'
   };
   if (area) fields['Area'] = [area];
@@ -1344,7 +1343,7 @@ async function importPhotoTasks() {
   for (const line of lines) {
     if (line.startsWith('Review') || line.startsWith('Extracted')) continue;
     try {
-      const r = await AT.createTask({'Name':line,'Status':'To Do','Date Added':state.dayKey,'Target Date':state.dayKey,'Person':'Kat'});
+      const r = await AT.createTask({'Name':line,'Status':'Todo','Date Added':state.dayKey,'Target Date':state.dayKey,'Person':'Kat'});
       state.tasks.unshift(r.records[0]);
       added++;
     } catch(e){}
@@ -1629,7 +1628,7 @@ function sprintTaskHTML(t, isKat) {
       <div class="task-meta">
         ${pName?`<span class="task-pill tp-area">${esc(pName)}</span>`:''}
         ${hrs?`<span class="task-pill tp-time">${hrs}h</span>`:''}
-        ${f.Status&&f.Status!=='To Do'?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">${f.Status}</span>`:''}
+        ${f.Status&&f.Status!=='Todo'?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">${f.Status==='Done'?'Done':'Deferred'}</span>`:''}
       </div>
     </div>
     ${pullBtn}
@@ -1638,9 +1637,9 @@ function sprintTaskHTML(t, isKat) {
 
 async function toggleSprintTaskDone(id, done) {
   try {
-    await AT.updateSprintTask(id,{Status:done?'Done':'To Do'});
+    await AT.updateSprintTask(id,{Status:done?'Done':'Todo'});
     const t = sprintState.tasks.find(t=>t.id===id);
-    if (t) t.fields.Status = done?'Done':'To Do';
+    if (t) t.fields.Status = done?'Done':'Todo';
     renderSprintTasks();
     toast(done?'Done ✓':'Marked to do');
   } catch(e) { toast('Error: '+e.message); }
@@ -1650,7 +1649,7 @@ async function pullToDaily(sprintTaskId) {
   const t = sprintState.tasks.find(t=>t.id===sprintTaskId);
   if (!t) return;
   const fields = {
-    'Name': t.fields.Name, 'Status': 'To Do',
+    'Name': t.fields.Name, 'Status': 'Todo',
     'Date Added': state.dayKey, 'Target Date': state.dayKey,
     'Priority': 'Q1 Do Now', 'Person': 'Kat', 'Area': ['Business']
   };
@@ -1763,7 +1762,7 @@ async function addSprintTask(owner) {
   if (!name) return;
   const projectId = document.getElementById(`new-stask-project-${s}`).value;
   const hrs = parseFloat(document.getElementById(`new-stask-hrs-${s}`).value)||null;
-  const fields = {Name: name, Owner: owner, Sprint: sprintState.num, Status: 'To Do'};
+  const fields = {Name: name, Owner: owner, Sprint: sprintState.num, Status: 'Todo'};
   if (projectId) fields.Project = [projectId];
   if (hrs) fields['Estimated Hours'] = hrs;
   try {
@@ -1790,10 +1789,10 @@ function populateDropdowns() {
 
 // ─── Page-level voice ──────────────────────────────────────────
 const PAGE_VOICE_HINTS = {
-  day:    '"level 2" · "priority 1 finish the report" · "add task call dentist area health 30 minutes"',
-  tasks:  '"add task book appointment area health priority Q2 30 minutes"',
-  log:    '"mental focus 3" · "emotional energy 4" · "physical energy 2" · "life fuel 3" · "community 5"\n"what worked got through all my priorities" · "what to change take more breaks" · "day rating 4"\n"symptom fatigue" · "severity 3" · "impact mild/moderate/severe" · "duration two hours" · "trigger stress" · "action took rest"',
-  sprint: '"add task write proposal" · "add goal launch website" · "add project rebrand"',
+  day:    'Use these keywords:\n"level 2" — sets your day level\n"priority 1 [what it is]" — sets a priority\n"add task [name] area [area] minutes [n]" — adds a task\nExample: "level 2. priority 1 finish the board report. add task call dentist area health 30 minutes."',
+  tasks:  'Start with "add task" then the name, then any extras:\n"add task [name] area [area] priority Q2 minutes [n]"\nExample: "add task write annotated report area business priority Q1 90 minutes."',
+  log:    'Pillars: "mental focus 3" · "emotional energy 4" · "physical energy 2" · "life fuel 3" · "community 5"\nReflection: "what worked [text]" · "what to change [text]" · "notes [text]" · "day rating 4"\nSymptoms: "symptom fatigue" · "severity 3" · "impact mild" · "duration two hours" · "trigger stress" · "action rested"',
+  sprint: 'Use these keywords:\n"add task [name]" · "add goal [name]" · "add project [name]"\nExample: "add task write the proposal. add goal launch website by June."',
   week:   ''
 };
 
