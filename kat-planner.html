@@ -167,6 +167,13 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 .area-bar-label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
 .area-bar-track{background:var(--gray-light);border-radius:4px;height:6px}
 .area-bar-fill{height:6px;border-radius:4px;background:var(--teal);transition:width .4s}
+/* Weekly balance */
+.balance-focus{background:#FAECE7;border:1px solid var(--coral);border-radius:8px;padding:6px 10px;font-size:13px;color:#4A1B0C;margin-bottom:10px}
+.balance-row{margin-bottom:9px}
+.balance-head{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;font-weight:600}
+.balance-track{position:relative;background:var(--gray-light);border-radius:4px;height:8px}
+.balance-fill{height:8px;border-radius:4px;background:var(--teal);transition:width .4s}
+.balance-marker{position:absolute;top:-2px;width:2px;height:12px;background:#4A3F37;border-radius:1px}
 
 /* Setup */
 #setup{position:fixed;inset:0;background:var(--white);display:flex;align-items:center;justify-content:center;z-index:100;padding:24px}
@@ -327,6 +334,15 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Weekly balance -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--teal-dark)"></span>Weekly balance</span>
+          <span class="text-sm text-gray" id="balance-range-label">Mon–today</span>
+        </div>
+        <div class="card-body" id="weekly-balance-body"><!-- rendered by JS --></div>
       </div>
 
       <!-- 5 Daily Pillars (compact) -->
@@ -949,7 +965,7 @@ let state = {
   pillars: {}, reflection: {}, dayRating: null,
   symSev: null, matrixAnswers: {}, suggestedLevel: null,
   dayFieldsVisible: false, allFieldsVisible: false, voiceActive: null, recognition: null,
-  timeLogs: [], timer: null, timerInterval: null
+  timeLogs: [], weekTimeLogs: [], timer: null, timerInterval: null
 };
 
 let sprintState = {
@@ -1263,12 +1279,81 @@ const TIMER_CHIPS = [
   {label:'• Misc', area:'Misc', note:''}
 ];
 
+function mondayKey() {
+  const d = new Date();
+  d.setDate(d.getDate() - ((d.getDay()+6)%7)); // Mon=0 … Sun=6 offset back to Monday
+  return d.toISOString().slice(0,10);
+}
 async function loadTimeLogs() {
   try {
-    const logs = await AT.getTimeLogs(state.dayKey);
-    state.timeLogs = (logs||[]).filter(l => l.fields.Date === state.dayKey);
-  } catch(e) { state.timeLogs = []; }
+    const logs = await AT.getTimeLogs(mondayKey());
+    state.weekTimeLogs = logs || [];
+    state.timeLogs = state.weekTimeLogs.filter(l => l.fields.Date === state.dayKey);
+  } catch(e) { state.weekTimeLogs = []; state.timeLogs = []; }
   renderTimeLedger();
+  renderWeeklyBalance();
+}
+
+// ─── Weekly balance (actual vs expected-so-far per area) ─────────
+const WEEKDAY_ORDER = ['mon','tue','wed','thu','fri'];
+function weekdaysThrough(key) {
+  const idx = WEEKDAY_ORDER.indexOf(key);
+  return idx === -1 ? WEEKDAY_ORDER.slice() : WEEKDAY_ORDER.slice(0, idx+1); // weekend → whole week
+}
+function cumPlanned(field, days) {
+  return days.reduce((s,d) => s + ((SCHEDULE.days[d]&&SCHEDULE.days[d][field])||0), 0);
+}
+function computeWeeklyBalance() {
+  const days = weekdaysThrough(todaySchedKey());
+  const frac = days.length / WEEKDAY_ORDER.length;
+  const wt = SCHEDULE.weeklyTargets;
+  const buckets = [
+    {label:'Work',     areas:['Work Work','Buffer'], expected: cumPlanned('work',days),     target: wt.work},
+    {label:'Business', areas:['Business'],            expected: cumPlanned('business',days), target: wt.business},
+    {label:'Exercise', areas:['Health & Fitness'],    expected: cumPlanned('exercise',days), target: wt.exercise},
+    {label:'Learning', areas:['Learning'],            expected: (wt.learning||0)*frac,        target: wt.learning||0},
+    {label:'Creative', areas:['Creative'],            expected: (wt.creative||0)*frac,        target: wt.creative||0},
+    {label:'Admin',    areas:['Admin'],               expected: (wt.admin||0)*frac,           target: wt.admin||0}
+  ];
+  const byArea = {};
+  state.weekTimeLogs.forEach(l => {
+    const a = Array.isArray(l.fields.Area) ? l.fields.Area[0] : l.fields.Area;
+    if (a) byArea[a] = (byArea[a]||0) + (l.fields.Minutes||0);
+  });
+  buckets.forEach(b => {
+    b.actual = b.areas.reduce((s,a)=>s+(byArea[a]||0),0) / 60;
+    b.deficit = b.expected - b.actual;          // +ve = behind pace
+    b.deficitPct = b.target>0 ? b.deficit/b.target : 0;
+  });
+  const signals = ['Rest','Relationships','Misc']
+    .map(a => ({label:a, hours:(byArea[a]||0)/60}))
+    .filter(s => s.hours > 0);
+  return {buckets, signals, days};
+}
+function renderWeeklyBalance() {
+  const el = document.getElementById('weekly-balance-body');
+  if (!el) return;
+  const {buckets, signals} = computeWeeklyBalance();
+  const behind = buckets.filter(b=>b.target>0).sort((a,b)=>b.deficitPct-a.deficitPct);
+  const focus = behind[0] && behind[0].deficit > 0.25 ? behind[0] : null;
+  let html = '';
+  if (focus) html += `<div class="balance-focus">⚖️ Furthest behind: <strong>${focus.label}</strong> — ${focus.deficit.toFixed(1)}h under pace. Prioritize here.</div>`;
+  html += buckets.map(b => {
+    const status = b.deficit>0.25 ? 'behind' : (b.deficit<-0.25 ? 'ahead' : 'ontrack');
+    const statusLabel = status==='behind' ? `${b.deficit.toFixed(1)}h behind` : status==='ahead' ? `${(-b.deficit).toFixed(1)}h ahead` : 'on track';
+    const color = status==='behind' ? 'var(--coral)' : status==='ahead' ? 'var(--teal-dark)' : 'var(--teal)';
+    const pctActual = b.target>0 ? Math.min(100,Math.round(b.actual/b.target*100)) : 0;
+    const pctExpected = b.target>0 ? Math.min(100,Math.round(b.expected/b.target*100)) : 0;
+    return `<div class="balance-row">
+      <div class="balance-head"><span>${b.label}</span><span class="text-sm" style="color:${color};font-weight:600">${b.actual.toFixed(1)} / ${b.target}h · ${statusLabel}</span></div>
+      <div class="balance-track">
+        <div class="balance-fill" style="width:${pctActual}%;background:${color}"></div>
+        <div class="balance-marker" style="left:${pctExpected}%" title="Pace target so far: ${b.expected.toFixed(1)}h"></div>
+      </div>
+    </div>`;
+  }).join('');
+  if (signals.length) html += `<div class="text-sm text-gray" style="margin-top:8px">Balance signals: ${signals.map(s=>`${esc(s.label)} ${s.hours.toFixed(1)}h`).join(' · ')}</div>`;
+  el.innerHTML = html;
 }
 
 function renderTimerChips() {
