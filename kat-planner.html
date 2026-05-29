@@ -1307,7 +1307,12 @@ async function addTask(ctx) {
     inputEl.value=''; autoResize(inputEl);
     renderTodayTasks(); renderAllTasks(); renderWorkBar();
     toast('Task added');
-  } catch(e) { toast('Error: '+e.message); }
+  } catch(e) {
+    const msg = (e.message||'').includes('Insufficient permissions to create new select option')
+      ? 'Airtable setup needed: add the select options to your fields first (Status, Priority, Area). See setup guide.'
+      : 'Error: '+e.message;
+    toast(msg, 5000);
+  }
 }
 
 // ─── Photo import ──────────────────────────────────────────────
@@ -1785,8 +1790,8 @@ function populateDropdowns() {
 
 // ─── Page-level voice ──────────────────────────────────────────
 const PAGE_VOICE_HINTS = {
-  day:    '"level 2" · "priority 1 finish the report" · "add task call dentist"',
-  tasks:  '"add task book appointment" · "area health" · "30 minutes"',
+  day:    '"level 2" · "priority 1 finish the report" · "add task call dentist area health 30 minutes"',
+  tasks:  '"add task book appointment area health priority Q2 30 minutes"',
   log:    '"mental focus 3" · "emotional energy 4" · "physical energy 2" · "life fuel 3" · "community 5"\n"what worked got through all my priorities" · "what to change take more breaks" · "day rating 4"\n"symptom fatigue" · "severity 3" · "duration two hours" · "trigger stress" · "action took rest"',
   sprint: '"add task write proposal" · "add goal launch website" · "add project rebrand"',
   week:   ''
@@ -1826,6 +1831,39 @@ function setPillarDirect(name, val) {
   saveLocalState();
 }
 
+function applyTaskExtras(t, ctx) {
+  // Area matching
+  const AREAS = ['work work','business','health & fitness','health and fitness','health','learning','creative','rest','relationships','admin'];
+  const AREA_MAP = {'health and fitness':'Health & Fitness','health':'Health & Fitness','work work':'Work Work','business':'Business','learning':'Learning','creative':'Creative','rest':'Rest','relationships':'Relationships','admin':'Admin'};
+  const areaT = extractSection(t,'area',['minutes','mins','priority','add task','task']);
+  if (areaT) {
+    const matched = AREAS.find(a => areaT.startsWith(a));
+    if (matched) {
+      const mapped = AREA_MAP[matched]||matched.split(' ').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+      const el = document.getElementById(`${ctx}-task-area`);
+      if (el) { el.value = mapped; if(!document.getElementById(`${ctx}-task-fields`).classList.contains('visible')) toggleDayFields&&toggleDayFields()||toggleAllFields&&toggleAllFields(); }
+    }
+  }
+  // Priority
+  const prioT = extractSection(t,'priority',['minutes','mins','area','add task','task']);
+  if (prioT) {
+    const pm={'q1':'Q1 Do Now','q2':'Q2 Schedule','q3':'Q3 Delegate','q4':'Q4 Drop','1':'Q1 Do Now','2':'Q2 Schedule','3':'Q3 Delegate','4':'Q4 Drop','one':'Q1 Do Now','two':'Q2 Schedule','three':'Q3 Delegate','four':'Q4 Drop'};
+    const key = prioT.split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g,'');
+    const pEl = document.getElementById(`${ctx}-task-priority`);
+    if (pEl && pm[key]) pEl.value = pm[key];
+  }
+  // Minutes
+  const minsT = extractSection(t,'minutes',['area','priority','add task','task'])||extractSection(t,'mins',['area','priority','add task','task']);
+  if (minsT) {
+    const n = wordToNum(minsT.split(/\s+/)[0]);
+    const mEl = document.getElementById(`${ctx}-task-mins`);
+    if (mEl && n && n > 0) mEl.value = n;
+  }
+  // Show the extras fields if anything was filled
+  const fieldsEl = document.getElementById(`${ctx}-task-fields`);
+  if (fieldsEl && (areaT||prioT||minsT) && !fieldsEl.classList.contains('visible')) fieldsEl.classList.add('visible');
+}
+
 function applyPageVoice(transcript, tab) {
   const t = transcript.toLowerCase().replace(/[,\.!?]/g,' ').replace(/\s+/g,' ').trim();
   const updates = [];
@@ -1835,7 +1873,8 @@ function applyPageVoice(transcript, tab) {
     'day rating','rating','symptom','severity','duration','trigger','action taken','action',
     'level','day level','priority one','priority two','priority three',
     'priority 1','priority 2','priority 3','first priority','second priority','third priority',
-    'add task','task','add goal','goal','add project','project','meeting'];
+    'add task','task','add goal','goal','add project','project','meeting',
+    'area','priority','minutes','mins','hours'];
 
   if (tab === 'log') {
     [['mental focus','Mental Focus'],['emotional energy','Emotional Energy'],
@@ -1889,12 +1928,18 @@ function applyPageVoice(transcript, tab) {
     });
 
     const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
-    if(taskT){const el=document.getElementById('day-task-input');el.value=cap(taskT);autoResize(el);updates.push('Task ready — tap + to save');}
+    if(taskT){
+      const el=document.getElementById('day-task-input'); el.value=cap(taskT); autoResize(el);
+      applyTaskExtras(t,'day'); updates.push('Task ready — tap + to save');
+    }
   }
 
   if (tab === 'tasks') {
     const taskT=extractSection(t,'add task',STOPS)||extractSection(t,'task',STOPS);
-    if(taskT){const el=document.getElementById('all-task-input');el.value=cap(taskT);autoResize(el);updates.push('Task ready — tap + to save');}
+    if(taskT){
+      const el=document.getElementById('all-task-input'); el.value=cap(taskT); autoResize(el);
+      applyTaskExtras(t,'all'); updates.push('Task ready — tap + to save');
+    }
   }
 
   if (tab === 'sprint') {
