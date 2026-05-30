@@ -1978,6 +1978,17 @@ function renderTaskRow(t, ctx) {
     else if (daysTo <= 3) deadlinePill = `<span class="task-pill tp-soon">Due in ${daysTo}d</span>`;
     else deadlinePill = `<span class="task-pill tp-date">Due ${f['Target Date']}</span>`;
   }
+  // Predicted completion (active work tasks with an estimate)
+  let predPill = '';
+  const pred = (state.predicted||{})[t.id];
+  if (pred && !done) {
+    const slip = predictionSlipDays(t);
+    if (slip >= SLIP_REVIEW_DAYS) {
+      predPill = `<span class="task-pill tp-slip" title="Initially predicted ${esc(f['Initial Predicted']||'')} — review this task">⚠ slipped ${slip}d → ${fmtPredDate(pred)}</span>`;
+    } else {
+      predPill = `<span class="task-pill tp-pred" title="Predicted completion${f['Initial Predicted']?` · initial ${esc(f['Initial Predicted'])}`:''}">🔮 ~${fmtPredDate(pred)}</span>`;
+    }
+  }
   // Minutes display
   let minsDisplay = '';
   if (mins) {
@@ -1995,6 +2006,7 @@ function renderTaskRow(t, ctx) {
         ${q?`<span class="task-pill ${qcls}">${PRIO_LABEL[q]||q.split(' ')[0]}</span>`:''}
         ${minsDisplay?`<span class="task-pill tp-time">⏱ ${minsDisplay}</span>`:''}
         ${deadlinePill}
+        ${predPill}
         ${stale&&!done?`<span class="task-pill tp-stale">${daysOld}d old</span>`:''}
       </div>
     </div>
