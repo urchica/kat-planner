@@ -1559,14 +1559,16 @@ function renderWeeklyBalance() {
   const focus = behind[0] && behind[0].deficit > 0.25 ? behind[0] : null;
   let html = '';
   if (focus) html += `<div class="balance-focus">⚖️ Furthest behind: <strong>${focus.label}</strong> — ${focus.deficit.toFixed(1)}h under pace. Prioritize here.</div>`;
+  const fmtA = h => h>=1 ? h.toFixed(1)+'h' : (h>0 ? Math.round(h*60)+'m' : '0h');
   html += buckets.map(b => {
     const status = b.deficit>0.25 ? 'behind' : (b.deficit<-0.25 ? 'ahead' : 'ontrack');
     const statusLabel = status==='behind' ? `${b.deficit.toFixed(1)}h behind` : status==='ahead' ? `${(-b.deficit).toFixed(1)}h ahead` : 'on track';
     const color = status==='behind' ? 'var(--coral)' : status==='ahead' ? 'var(--teal-dark)' : 'var(--teal)';
-    const pctActual = b.target>0 ? Math.min(100,Math.round(b.actual/b.target*100)) : 0;
+    const rawPct = b.target>0 ? Math.round(b.actual/b.target*100) : 0;
+    const pctActual = b.actual>0 ? Math.min(100, Math.max(2, rawPct)) : 0; // min sliver so any logged time stays visible
     const pctExpected = b.target>0 ? Math.min(100,Math.round(b.expected/b.target*100)) : 0;
     return `<div class="balance-row">
-      <div class="balance-head"><span>${b.label}</span><span class="text-sm" style="color:${color};font-weight:600">${b.actual.toFixed(1)} / ${b.target}h · ${statusLabel}</span></div>
+      <div class="balance-head"><span>${b.label}</span><span class="text-sm" style="color:${color};font-weight:600">${fmtA(b.actual)} / ${b.target}h · ${statusLabel}</span></div>
       <div class="balance-track">
         <div class="balance-fill" style="width:${pctActual}%;background:${color}"></div>
         <div class="balance-marker" style="left:${pctExpected}%" title="Pace target so far: ${b.expected.toFixed(1)}h"></div>
