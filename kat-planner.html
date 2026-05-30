@@ -1865,9 +1865,78 @@ function addCustomMeeting() {
 function delCustomMeeting(i) { state.customMeetings.splice(i,1); saveLocalState(); renderMeetings(); }
 
 // ─── Tasks ─────────────────────────────────────────────────────
+// ─── Predicted completion dates (step 5) ─────────────────────────
+// Walk the active estimated work-task backlog in priority order, consuming
+// each weekday's work capacity, and assign each task the date its last
+// minute lands on. "Initial Predicted" is snapshotted to Airtable the first
+// time a task is projected; a task is flagged for review when its current
+// prediction slips 7+ days past that initial snapshot.
+const SLIP_REVIEW_DAYS = 7;
+function dayCapacityMins(date, isToday) {
+  const day = SCHEDULE.days[DOW_KEYS[date.getDay()]];
+  if (!day) return 0; // weekend / no template
+  let base = (isToday ? currentWorkCeiling() : day.work) * 60;
+  if (isToday) base = Math.max(0, base - workLoggedTodayMins());
+  return base;
+}
+function computePredictedDates() {
+  const out = {};
+  const tasks = state.tasks.filter(t =>
+    t.fields.Status!=='Done' && t.fields.Status!=='Deferred' &&
+    isWorkTask(t) && (t.fields['Estimated Minutes']||0) > 0);
+  tasks.sort(prioSort);
+  let cursor = new Date(); cursor.setHours(0,0,0,0);
+  let remaining = dayCapacityMins(cursor, true);
+  let guard = 0;
+  for (const t of tasks) {
+    let need = t.fields['Estimated Minutes'];
+    while (need > 0 && guard < 500) {
+      if (remaining <= 0) {
+        do {
+          cursor = new Date(cursor.getTime() + 86400000);
+          guard++;
+          remaining = dayCapacityMins(cursor, false);
+        } while (remaining <= 0 && guard < 500);
+        if (remaining <= 0) break; // no capacity anywhere — bail
+      }
+      const use = Math.min(need, remaining);
+      need -= use; remaining -= use;
+    }
+    out[t.id] = cursor.toISOString().slice(0,10);
+  }
+  return out;
+}
+function predictionSlipDays(t) {
+  const init = t.fields['Initial Predicted'];
+  const cur = (state.predicted||{})[t.id];
+  if (!init || !cur) return 0;
+  return Math.round((new Date(cur) - new Date(init)) / 86400000);
+}
+const _backfilling = new Set();
+function refreshPredictions() {
+  state.predicted = computePredictedDates();
+  // Snapshot Initial Predicted for any newly-projected task that lacks one.
+  state.tasks.filter(t =>
+    state.predicted[t.id] && !t.fields['Initial Predicted'] && !_backfilling.has(t.id)
+  ).forEach(t => {
+    _backfilling.add(t.id);
+    const val = state.predicted[t.id];
+    AT.updateTask(t.id, {'Initial Predicted': val})
+      .then(() => { t.fields['Initial Predicted'] = val; })
+      .catch(() => { _backfilling.delete(t.id); });
+  });
+}
+function fmtPredDate(iso) {
+  if (!iso) return '';
+  const [y,m,d] = iso.split('-').map(Number);
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${MON[m-1]} ${d}`;
+}
+
 async function loadTasks() {
   try {
     state.tasks = await AT.getTasks();
+    refreshPredictions();
     renderTodayTasks();
     renderAllTasks();
     renderWorkBar();
