@@ -253,6 +253,18 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 .cap-ok{color:var(--teal);font-weight:700}
 .cap-warn{color:var(--amber);font-weight:700}
 .cap-over{color:#E53E3E;font-weight:700}
+/* Day schedule timeline */
+.sched-list{display:flex;flex-direction:column}
+.sched-row{display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--gray-light)}
+.sched-row:last-child{border-bottom:none}
+.sched-time{font-size:11px;color:var(--gray);width:54px;flex-shrink:0;padding-top:3px;font-variant-numeric:tabular-nums}
+.sched-body{flex:1}
+.sched-label{font-size:13px;font-weight:600;line-height:1.4}
+.sched-dur{font-size:11px;color:var(--gray);font-weight:400;margin-left:5px}
+.sched-task{font-size:12px;color:var(--gray-mid);padding:1px 0 1px 10px;line-height:1.4}
+.sched-empty{font-size:12px;color:var(--gray);padding-left:10px;font-style:italic}
+.sched-cal-row{background:rgba(99,102,241,.07);border-radius:6px;padding:5px 8px;margin:2px 0}
+.sched-wrap .sched-label{color:var(--gray);font-weight:400}
 .pull-btn{font-size:11px;padding:4px 9px;border-radius:6px;border:1.5px solid var(--teal);color:var(--teal);background:var(--white);cursor:pointer;font-weight:600;flex-shrink:0;white-space:nowrap;transition:.15s}
 .pull-btn.pulled{background:var(--teal-light);border-color:var(--teal-mid);color:var(--teal-dark);cursor:default}
 .section-toggle{cursor:pointer;user-select:none}
@@ -948,6 +960,21 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
     <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Active rest ideas</div>
     <ul style="font-size:12px;color:var(--gray);margin:0 0 18px;padding-left:18px;line-height:1.6" id="settings-rest-list"></ul>
 
+    <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Calendar connections</div>
+    <div style="font-size:12px;color:var(--gray);margin-bottom:10px;line-height:1.6">
+      Paste your calendar's <strong>iCal / webcal URL</strong> to see events in your day schedule and meetings card.<br>
+      📧 <strong>Outlook:</strong> Calendar → Share → Publish to web → ICS link<br>
+      📅 <strong>Google:</strong> Calendar settings → Integrate calendar → Secret address in iCal format
+    </div>
+    <div style="margin-bottom:8px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">Outlook iCal URL</label>
+      <input type="url" id="cal-url-outlook" class="form-input" style="width:100%" placeholder="https://outlook.live.com/owa/…/calendar.ics"/>
+    </div>
+    <div style="margin-bottom:18px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">Google Calendar iCal URL</label>
+      <input type="url" id="cal-url-google" class="form-input" style="width:100%" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"/>
+    </div>
+
     <div class="flex gap8">
       <button class="btn btn-primary" style="flex:1" onclick="saveSettings()">Save</button>
       <button class="btn btn-ghost" style="flex:1" onclick="closeSettings()">Cancel</button>
@@ -1045,7 +1072,7 @@ const WORK_AREAS = ['Work Work','Business'];
 
 let state = {
   token: null, dayKey: '', dayName: '',
-  level: 1, tasks: [], customMeetings: [],
+  level: 1, tasks: [], customMeetings: [], calEvents: [],
   priorities: [{text:'',q:'Q2 Schedule',done:false},{text:'',q:'Q2 Schedule',done:false},{text:'',q:'Q2 Schedule',done:false}],
   pillars: {}, reflection: {}, dayRating: null,
   symSev: null, matrixAnswers: {}, suggestedLevel: null,
@@ -1261,12 +1288,14 @@ async function initApp() {
   document.getElementById('hdr-day').textContent = state.dayName;
   document.getElementById('hdr-date').textContent = `${MONTHS[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
   loadLocalState();
+  loadCalCache();          // restore cached events before first render
   renderPillarsDisplay();
   renderPillarsForm();
   renderPriorities();
   renderMeetings();
   renderWorkBar();
   renderDayPlan();
+  fetchAndCacheCalEvents(); // background refresh (non-blocking)
   renderTimerChips();
   restoreTimer();
   await loadTasks();
@@ -1428,22 +1457,28 @@ function renderDayPlan() {
   const level = preview ? previewDefaultLevel() : state.level;
   const p = computeDayPlan(level, schedKey);
   const lc = LEVEL_CONFIG[level];
-  const chip = (area, hrs) => `<div class="plan-chip${p.protect===area?' pc-protect':''}">
-    <span class="pc-area">${area}${p.protect===area?' ⚖️':''}</span><span class="pc-hrs">${hrs}h</span></div>`;
-  let chips = chip('Work', p.work);
-  if (!p.weekend) { chips += chip('Business', p.business) + chip('Exercise', p.exercise); }
   const nav = `<div class="plan-nav">
       <button class="plan-nav-btn" onclick="shiftPreview(-1)"${previewOffset===0?' disabled':''}>◀</button>
       <span class="plan-nav-day">${esc(previewDayLabel())}</span>
       <button class="plan-nav-btn" onclick="shiftPreview(1)"${previewOffset>=7?' disabled':''}>▶</button>
       ${preview?`<button class="plan-nav-today" onclick="resetPreview()">Back to today</button>`:''}
     </div>`;
-  const levelLine = preview
-    ? `<div class="text-sm text-gray" style="margin-bottom:6px"><strong style="color:var(--black)">${lc.label}</strong> · default for ${esc(previewDayLabel())} <span class="plan-preview-badge">preview</span></div>`
-    : `<div class="text-sm text-gray" style="margin-bottom:6px"><strong style="color:var(--black)">${lc.label}</strong></div>`;
-  el.innerHTML = nav + levelLine +
-    `<div class="plan-chips">${chips}</div>
-    <div class="plan-note">${esc(p.note)}</div>`;
+
+  if (preview) {
+    // Full day schedule view for tomorrow and beyond
+    const levelLine = `<div class="text-sm text-gray" style="margin-bottom:8px"><strong style="color:var(--black)">${lc.label}</strong> · default for ${esc(previewDayLabel())} <span class="plan-preview-badge">preview</span></div>`;
+    el.innerHTML = nav + levelLine + renderScheduleTimeline(schedKey, previewDate());
+  } else {
+    // Today: keep the concise chips + note view
+    const chip = (area, hrs) => `<div class="plan-chip${p.protect===area?' pc-protect':''}">
+      <span class="pc-area">${area}${p.protect===area?' ⚖️':''}</span><span class="pc-hrs">${hrs}h</span></div>`;
+    let chips = chip('Work', p.work);
+    if (!p.weekend) { chips += chip('Business', p.business) + chip('Exercise', p.exercise); }
+    const levelLine = `<div class="text-sm text-gray" style="margin-bottom:6px"><strong style="color:var(--black)">${lc.label}</strong></div>`;
+    el.innerHTML = nav + levelLine +
+      `<div class="plan-chips">${chips}</div>
+      <div class="plan-note">${esc(p.note)}</div>`;
+  }
 }
 
 // ─── Mid-day re-projection ───────────────────────────────────────
@@ -1885,15 +1920,33 @@ function togglePDone(i) { state.priorities[i].done=!state.priorities[i].done; sa
 // ─── Meetings ──────────────────────────────────────────────────
 function renderMeetings() {
   const standing = STANDING[state.dayName]||[];
-  const all = [...standing, ...state.customMeetings];
+  const custom = state.customMeetings;
+  // Calendar events for today (non-all-day only)
+  const calToday = getEventsForDate(state.dayKey).filter(e => !e.allDay).map(e => {
+    const d = e.start instanceof Date ? e.start : new Date(e.start);
+    return { time: d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), name: e.title||'Event',
+      badge:'badge-alt', label: e.source==='outlook' ? '📧 Outlook' : '📅 Google' };
+  });
   const el = document.getElementById('meetings-body');
+  const all = [...standing, ...custom, ...calToday];
   if (!all.length) { el.innerHTML='<div class="no-tasks">No meetings today.</div>'; return; }
-  el.innerHTML = all.map((m,i) => `<div class="meeting-row">
-    <div class="meeting-time">${m.time}</div>
-    <div class="meeting-name">${m.name}</div>
-    <span class="badge ${m.badge||'badge-alt'}">${m.label||'Custom'}</span>
-    ${i>=standing.length?`<button class="task-del" onclick="delCustomMeeting(${i-standing.length})">×</button>`:''}
-  </div>`).join('');
+  el.innerHTML =
+    standing.map(m => `<div class="meeting-row">
+      <div class="meeting-time">${m.time}</div>
+      <div class="meeting-name">${esc(m.name)}</div>
+      <span class="badge ${m.badge||'badge-alt'}">${m.label||''}</span>
+    </div>`).join('')
+    + custom.map((m,i) => `<div class="meeting-row">
+      <div class="meeting-time">${m.time}</div>
+      <div class="meeting-name">${esc(m.name)}</div>
+      <span class="badge ${m.badge||'badge-alt'}">${m.label||'Custom'}</span>
+      <button class="task-del" onclick="delCustomMeeting(${i})">×</button>
+    </div>`).join('')
+    + calToday.map(m => `<div class="meeting-row">
+      <div class="meeting-time">${m.time}</div>
+      <div class="meeting-name">${esc(m.name)}</div>
+      <span class="badge badge-alt">${m.label}</span>
+    </div>`).join('');
 }
 
 function toggleAddMeeting() {
@@ -2308,6 +2361,10 @@ function openSettings() {
   document.getElementById('settings-floor-ex').textContent = SCHEDULE.floors.exercise;
   document.getElementById('settings-rest-list').innerHTML = SCHEDULE.activeRest.map(r=>`<li>${esc(r)}</li>`).join('');
 
+  const calUrls = loadCalUrls();
+  const oel = document.getElementById('cal-url-outlook'); if (oel) oel.value = calUrls.outlook||'';
+  const gel = document.getElementById('cal-url-google');  if (gel) gel.value = calUrls.google||'';
+
   document.getElementById('settings-modal').style.display='flex';
 }
 function closeSettings() { document.getElementById('settings-modal').style.display='none'; }
@@ -2324,6 +2381,16 @@ function saveSettings() {
     SCHEDULE.weeklyTargets[k] = parseFloat(document.getElementById(`tgt-${k}`).value)||0;
   });
   saveSchedule();
+  // Save calendar URLs and refresh events if changed
+  const newCalUrls = {
+    outlook: (document.getElementById('cal-url-outlook')?.value||'').trim(),
+    google:  (document.getElementById('cal-url-google')?.value||'').trim()
+  };
+  const oldCalUrls = loadCalUrls();
+  saveCalUrls(newCalUrls);
+  if (newCalUrls.outlook !== oldCalUrls.outlook || newCalUrls.google !== oldCalUrls.google) {
+    fetchAndCacheCalEvents(); // non-blocking
+  }
   closeSettings();
   toast('Schedule saved');
 }
@@ -2663,6 +2730,199 @@ function updateCapacityCards() {
     const el = document.getElementById(id);
     if (el) el.innerHTML = html;
   });
+}
+
+// ─── Calendar (iCal fetch + parse) ────────────────────────────
+function loadCalUrls() {
+  try { return JSON.parse(localStorage.getItem('kat-cal-urls') || '{}'); } catch(e) { return {}; }
+}
+function saveCalUrls(u) { localStorage.setItem('kat-cal-urls', JSON.stringify(u)); }
+
+function parseIcalDt(val) {
+  const clean = val.replace(/Z$/, '');
+  if (!/T/.test(clean)) {
+    // All-day: YYYYMMDD
+    const [y,mo,d] = [clean.slice(0,4), clean.slice(4,6), clean.slice(6,8)];
+    return { date: new Date(`${y}-${mo}-${d}T00:00:00`), allDay: true };
+  }
+  const [datePart, timePart] = clean.split('T');
+  const [y,mo,d] = [datePart.slice(0,4), datePart.slice(4,6), datePart.slice(6,8)];
+  const [h,mi,s] = [timePart.slice(0,2), timePart.slice(2,4), timePart.slice(4,6)||'00'];
+  return { date: new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`), allDay: false };
+}
+
+function parseIcal(text) {
+  const lines = text.replace(/\r\n[ \t]/g, '').replace(/\r/g, '').split('\n');
+  const events = [];
+  let inEvent = false, ev = {};
+  for (const raw of lines) {
+    const t = raw.trim();
+    if (t === 'BEGIN:VEVENT') { inEvent = true; ev = {}; continue; }
+    if (t === 'END:VEVENT') {
+      if (inEvent && ev.title && ev.start) events.push(ev);
+      inEvent = false; ev = {}; continue;
+    }
+    if (!inEvent) continue;
+    const ci = t.indexOf(':');
+    if (ci < 0) continue;
+    const prop = t.slice(0, ci).split(';')[0].toUpperCase();
+    const val  = t.slice(ci + 1);
+    if (prop === 'SUMMARY') ev.title = val.replace(/\\n/g,' ').replace(/\\[,;]/g, m => m[1]);
+    if (prop === 'DTSTART') { const p = parseIcalDt(val); ev.start = p.date; ev.allDay = p.allDay; }
+    if (prop === 'DTEND')   { const p = parseIcalDt(val); ev.end   = p.date; }
+    if (prop === 'STATUS')   ev.status = val.toUpperCase();
+  }
+  return events.filter(e => e.status !== 'CANCELLED');
+}
+
+async function fetchAndCacheCalEvents() {
+  const urls = loadCalUrls();
+  if (!urls.outlook && !urls.google) return;
+  const proxy = 'https://api.allorigins.win/raw?url=';
+  const results = [];
+  for (const [src, url] of [['outlook', urls.outlook], ['google', urls.google]]) {
+    if (!url) continue;
+    try {
+      const r = await fetch(proxy + encodeURIComponent(url));
+      if (!r.ok) { console.warn(`Cal fetch ${src}: HTTP ${r.status}`); continue; }
+      parseIcal(await r.text()).forEach(e => results.push({ ...e, source: src }));
+    } catch(e) { console.warn(`Cal fetch ${src}:`, e.message); }
+  }
+  state.calEvents = results;
+  try {
+    localStorage.setItem('kat-cal-cache', JSON.stringify({
+      ts: Date.now(),
+      events: results.map(e => ({ ...e, start: e.start?.toISOString(), end: e.end?.toISOString() }))
+    }));
+  } catch(e) {}
+  renderDayPlan();
+  renderMeetings();
+}
+
+function loadCalCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem('kat-cal-cache') || 'null');
+    if (!c || Date.now() - c.ts > 2 * 3600000) return false;
+    state.calEvents = c.events.map(e => ({ ...e, start: e.start ? new Date(e.start) : null, end: e.end ? new Date(e.end) : null }));
+    return true;
+  } catch(e) { return false; }
+}
+
+function getEventsForDate(dateStr) {
+  return (state.calEvents || []).filter(e => {
+    const d = e.start instanceof Date ? e.start : (e.start ? new Date(e.start) : null);
+    return d && d.toISOString().slice(0,10) === dateStr;
+  }).sort((a,b) => new Date(a.start) - new Date(b.start));
+}
+
+// ─── Schedule timeline ─────────────────────────────────────────
+function timeToMins(hhmm) {
+  if (!hhmm) return 0;
+  const [h,m] = hhmm.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+function minsToTime(m) {
+  const h = Math.floor(m / 60) % 24, mn = m % 60;
+  return `${h % 12 || 12}:${String(mn).padStart(2,'0')} ${h >= 12 ? 'pm' : 'am'}`;
+}
+
+function getTasksForBlock(date, area) {
+  const ds = date.toISOString().slice(0,10);
+  return state.tasks.filter(t => {
+    if (t.fields.Status === 'Done' || t.fields.Status === 'Deferred') return false;
+    const areas = Array.isArray(t.fields.Area) ? t.fields.Area : (t.fields.Area ? [t.fields.Area] : []);
+    if (!areas.includes(area)) return false;
+    if (t._isSprint) return true;
+    const td = t.fields['Target Date'];
+    return td ? td <= ds : false;
+  }).sort(prioSort).slice(0, 6);
+}
+
+function renderScheduleTimeline(schedKey, date) {
+  const day = SCHEDULE.days[schedKey];
+  if (!day) return '<p class="text-sm text-gray">No schedule template for this day.</p>';
+  const dateStr = date.toISOString().slice(0,10);
+  let cursor = timeToMins(day.start || '06:30');
+  const blocks = [];
+
+  if ((day.work||0) > 0) {
+    const dur = Math.round(day.work * 60);
+    blocks.push({ type:'act', label:'Work', icon:'⚡', color:'var(--teal)', area:'Work Work', startMins:cursor, dur });
+    cursor += dur;
+  }
+  if ((day.exercise||0) > 0) {
+    const dur = Math.round(day.exercise * 60);
+    blocks.push({ type:'act', label:'Exercise', icon:'🏃', color:'var(--purple)', area:'Health & Fitness', startMins:cursor, dur });
+    cursor += dur;
+  }
+  if ((day.business||0) > 0) {
+    const dur = Math.round(day.business * 60);
+    blocks.push({ type:'act', label:'Business', icon:'🐕', color:'var(--teal-dark)', area:'Business', startMins:cursor, dur });
+    cursor += dur;
+  }
+
+  // Insert calendar events (non-all-day, within day bounds)
+  const wrapMins = timeToMins(day.wrapEnd || '17:30');
+  const startMins = timeToMins(day.start || '06:30');
+  const calEvs = getEventsForDate(dateStr);
+  calEvs.filter(e => !e.allDay).forEach(e => {
+    const d = e.start instanceof Date ? e.start : new Date(e.start);
+    const sm = d.getHours() * 60 + d.getMinutes();
+    if (sm < startMins || sm >= wrapMins) return;
+    const ed = e.end instanceof Date ? e.end : (e.end ? new Date(e.end) : null);
+    const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
+    blocks.push({ type:'cal', label: e.title||'Event', icon:'📅', startMins: sm, dur,
+      badge: e.source === 'outlook' ? '📧' : '📅' });
+  });
+
+  blocks.sort((a,b) => a.startMins - b.startMins);
+
+  const fh = m => m >= 60 ? `${(m/60).toFixed(1)}h` : `${m}m`;
+  let html = '<div class="sched-list">';
+
+  // All-day events banner
+  const allDay = calEvs.filter(e => e.allDay);
+  if (allDay.length) {
+    html += `<div class="sched-row" style="background:rgba(99,102,241,.06);border-radius:6px;padding:5px 8px;margin-bottom:4px">
+      <div class="sched-time" style="font-size:10px;padding-top:2px">all day</div>
+      <div class="sched-body">${allDay.map(e=>`<div class="sched-label">📅 ${esc(e.title||'')}</div>`).join('')}</div>
+    </div>`;
+  }
+
+  for (const b of blocks) {
+    const tl = minsToTime(b.startMins);
+    if (b.type === 'cal') {
+      html += `<div class="sched-row sched-cal-row">
+        <div class="sched-time">${tl}</div>
+        <div class="sched-body"><div class="sched-label">${b.icon} ${esc(b.label)} <span class="sched-dur">${fh(b.dur)}</span></div></div>
+      </div>`;
+    } else {
+      const tasks = getTasksForBlock(date, b.area);
+      const taskHtml = tasks.length
+        ? tasks.map(t=>`<div class="sched-task">• ${esc(t.fields.Name||'')}${t.fields['Estimated Minutes']?`<span class="sched-dur"> ${fmtMins(t.fields['Estimated Minutes'])}</span>`:''}</div>`).join('')
+        : `<div class="sched-empty">No tasks queued for this block</div>`;
+      html += `<div class="sched-row">
+        <div class="sched-time">${tl}</div>
+        <div class="sched-body" style="border-left:3px solid ${b.color};padding-left:8px">
+          <div class="sched-label" style="color:${b.color}">${b.icon} ${b.label} <span class="sched-dur">${fh(b.dur)}</span></div>
+          ${taskHtml}
+        </div>
+      </div>`;
+    }
+  }
+
+  html += `<div class="sched-row sched-wrap">
+    <div class="sched-time">${minsToTime(wrapMins)}</div>
+    <div class="sched-body" style="padding-left:8px"><div class="sched-label">🏁 Wrap</div></div>
+  </div></div>`;
+
+  const urls = loadCalUrls();
+  if (!urls.outlook && !urls.google) {
+    html += `<div style="margin-top:8px;padding:8px 10px;background:var(--gray-light);border-radius:8px;font-size:12px;color:var(--gray)">
+      📅 <a href="#" onclick="openSettings();return false;" style="color:var(--teal);font-weight:600">Connect your calendar in Settings</a> to see events here.
+    </div>`;
+  }
+  return html;
 }
 
 // ─── Utils ─────────────────────────────────────────────────────
