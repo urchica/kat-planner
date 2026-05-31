@@ -2827,7 +2827,7 @@ function classifyCalEvent(ev) {
 async function fetchAndCacheCalEvents() {
   const urls = loadCalUrls();
   if (!urls.outlook && !urls.google) return;
-  const proxy = 'https://api.allorigins.win/raw?url=';
+  const proxy = 'https://corsproxy.io/?';
   const results = [];
   for (const [src, url] of [['outlook', urls.outlook], ['google', urls.google]]) {
     if (!url) continue;
