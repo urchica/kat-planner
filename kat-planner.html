@@ -1298,7 +1298,7 @@ function signOut() {
 // ─── Init ──────────────────────────────────────────────────────
 async function initApp() {
   const today = new Date();
-  state.dayKey = today.toISOString().slice(0,10);
+  state.dayKey = localDateStr(today);   // local date, not UTC
   state.dayName = DAYS[today.getDay()];
   document.getElementById('hdr-day').textContent = state.dayName;
   document.getElementById('hdr-date').textContent = `${MONTHS[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
@@ -2857,11 +2857,16 @@ function loadCalCache() {
   } catch(e) { return false; }
 }
 
+// YYYY-MM-DD in the user's LOCAL timezone (avoids UTC off-by-one-day bugs)
+function localDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function getEventsForDate(dateStr) {
   return (state.calEvents || []).filter(e => {
     const d = e.start instanceof Date ? e.start : (e.start ? new Date(e.start) : null);
-    return d && d.toISOString().slice(0,10) === dateStr;
-  }).map(e => ({ ...e, kind: classifyCalEvent(e) }))   // attach classification
+    return d && localDateStr(d) === dateStr;   // compare in LOCAL timezone
+  }).map(e => ({ ...e, kind: classifyCalEvent(e) }))
     .sort((a,b) => new Date(a.start) - new Date(b.start));
 }
 
@@ -2896,7 +2901,7 @@ function getTasksForBlock(date, area) {
 function renderScheduleTimeline(schedKey, date) {
   const day = SCHEDULE.days[schedKey];
   if (!day) return '<p class="text-sm text-gray">No schedule template for this day.</p>';
-  const dateStr = date.toISOString().slice(0,10);
+  const dateStr = localDateStr(date);   // local timezone, not UTC
   let cursor = timeToMins(day.start || '06:30');
   const blocks = [];
 
