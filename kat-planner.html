@@ -1027,11 +1027,38 @@ let state = {
   timeLogs: [], weekTimeLogs: [], timer: null, timerInterval: null
 };
 
+// Sprint cadence: 14-day blocks running Saturday → Friday. An "anchor"
+// (a sprint number + its Saturday start) is stored once; the current sprint
+// auto-advances from today every 14 days. viewOffset lets Prev/Next browse
+// other sprints without changing the anchor. sprintState.num / .startDate are
+// the *currently displayed* values, recomputed by recomputeSprint().
 let sprintState = {
-  num: parseInt(localStorage.getItem('kat-sprint-num'))||1,
-  startDate: localStorage.getItem('kat-sprint-start')||null,
+  anchorNum: parseInt(localStorage.getItem('kat-sprint-anchor-num') || localStorage.getItem('kat-sprint-num')) || 1,
+  anchorStart: localStorage.getItem('kat-sprint-anchor-start') || localStorage.getItem('kat-sprint-start') || null,
+  viewOffset: 0,
+  num: 1, startDate: null,
   goals: [], projects: [], tasks: [], review: null
 };
+function snapToSaturday(date) {
+  const d = new Date(date); d.setHours(0,0,0,0);
+  d.setDate(d.getDate() - ((d.getDay()+1) % 7)); // Sat=6 → 0 back; Sun=0 → 1 back; …
+  return d;
+}
+function recomputeSprint() {
+  if (sprintState.anchorStart) {
+    // Re-snap the anchor to its Saturday (handles legacy mid-week start dates).
+    const anchor = snapToSaturday(sprintState.anchorStart + 'T00:00');
+    const today = new Date(); today.setHours(0,0,0,0);
+    const periods = Math.max(0, Math.floor((today - anchor) / (14*86400000)));
+    const idx = periods + sprintState.viewOffset;
+    sprintState.num = Math.max(1, sprintState.anchorNum + idx);
+    const start = new Date(anchor.getTime() + idx*14*86400000);
+    sprintState.startDate = start.toISOString().slice(0,10);
+  } else {
+    sprintState.num = Math.max(1, sprintState.anchorNum + sprintState.viewOffset);
+    sprintState.startDate = null;
+  }
+}
 
 // ─── Schedule template + weekly targets (the planning foundation) ───
 const DEFAULT_SCHEDULE = {
@@ -2494,8 +2521,8 @@ const SPRINT_REVIEW_FIELDS = [
 const srId = f => 'sr-'+f.replace(/[\s']/g,'-');
 
 function saveSprintConfig() {
-  localStorage.setItem('kat-sprint-num', sprintState.num);
-  if (sprintState.startDate) localStorage.setItem('kat-sprint-start', sprintState.startDate);
+  localStorage.setItem('kat-sprint-anchor-num', sprintState.anchorNum);
+  if (sprintState.anchorStart) localStorage.setItem('kat-sprint-anchor-start', sprintState.anchorStart);
 }
 
 function sprintEndDate() {
@@ -2506,6 +2533,7 @@ function sprintEndDate() {
 }
 
 async function loadSprintData() {
+  recomputeSprint();
   try {
     const [goals, projects, tasks] = await Promise.all([
       AT.getSprintGoals(),
@@ -2548,14 +2576,19 @@ function renderSprintHeaderHTML() {
   const fmt = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
   const startFmt = sprintState.startDate ? fmt(new Date(sprintState.startDate+'T00:00')) : '?';
   const endFmt = end ? fmt(end) : '?';
+  const viewing = sprintState.viewOffset !== 0;
+  const tag = !sprintState.anchorStart ? 'Set dates to start auto-tracking'
+    : viewing ? (sprintState.viewOffset>0?`Upcoming · +${sprintState.viewOffset}`:`Past · ${sprintState.viewOffset}`)
+    : 'Current sprint · auto-advances';
   return `<div class="sprint-header">
     <div class="flex justify-between items-center">
-      <div><div class="sprint-hdr-title">Sprint ${sprintState.num}</div><div class="sprint-hdr-sub">${startFmt} – ${endFmt}</div></div>
+      <div><div class="sprint-hdr-title">Sprint ${sprintState.num}</div><div class="sprint-hdr-sub">${startFmt} – ${endFmt} (Sat–Fri) · ${tag}</div></div>
       <div style="text-align:right"><div class="sprint-days">${daysLeft!==null?daysLeft:'—'}</div><div class="sprint-days-lbl">days left</div></div>
     </div>
     <div class="flex gap8" style="margin-top:10px">
       <button class="sprint-nav-btn" onclick="changeSprint(-1)">← Prev</button>
       <button class="sprint-nav-btn" onclick="changeSprint(1)">Next →</button>
+      ${viewing?`<button class="sprint-nav-btn" onclick="goToCurrentSprint()">● Current</button>`:''}
       <button class="sprint-nav-btn" onclick="setSprintStart()">Set dates</button>
     </div>
   </div>`;
