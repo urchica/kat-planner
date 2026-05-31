@@ -2714,24 +2714,34 @@ function toggleSprintReview() {
 }
 
 function changeSprint(delta) {
-  sprintState.num = Math.max(1, sprintState.num+delta);
-  if (sprintState.startDate) {
-    const d = new Date(sprintState.startDate+'T00:00');
-    d.setDate(d.getDate()+14*delta);
-    sprintState.startDate = d.toISOString().slice(0,10);
+  // Browse other sprints relative to today's auto-computed current sprint.
+  if (sprintState.anchorStart) {
+    sprintState.viewOffset += delta;
+  } else {
+    sprintState.viewOffset = Math.max(0, sprintState.viewOffset + delta); // no anchor yet
   }
-  saveSprintConfig();
+  loadSprintData();
+}
+
+function goToCurrentSprint() {
+  sprintState.viewOffset = 0;
   loadSprintData();
 }
 
 function setSprintStart() {
-  const d = prompt('Sprint start date (YYYY-MM-DD):', sprintState.startDate||state.dayKey);
-  if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-    sprintState.startDate = d;
-    saveSprintConfig();
-    document.getElementById('sprint-header-area').innerHTML = renderSprintHeaderHTML();
-    toast('Sprint dates updated');
-  }
+  recomputeSprint();
+  const curStart = sprintState.startDate || new Date().toISOString().slice(0,10);
+  const input = prompt('Sprint start date (will snap to its Saturday, YYYY-MM-DD):', curStart);
+  if (!input || !/^\d{4}-\d{2}-\d{2}$/.test(input)) { if (input) toast('Use format YYYY-MM-DD'); return; }
+  const numStr = prompt('Sprint number for this start date:', String(sprintState.num));
+  if (numStr === null) return;
+  const sat = snapToSaturday(input + 'T00:00');
+  sprintState.anchorStart = sat.toISOString().slice(0,10);
+  sprintState.anchorNum = Math.max(1, parseInt(numStr) || sprintState.num);
+  sprintState.viewOffset = 0; // re-anchor → show current
+  saveSprintConfig();
+  loadSprintData();
+  toast('Sprint dates set — anchored to Sat ' + sprintState.anchorStart);
 }
 
 function toggleAddGoal() {
