@@ -1950,7 +1950,9 @@ const _backfilling = new Set();
 function refreshPredictions() {
   state.predicted = computePredictedDates();
   // Snapshot Initial Predicted for any newly-projected task that lacks one.
+  // Skip sprint tasks — they don't have an Initial Predicted field in Airtable.
   state.tasks.filter(t =>
+    !t._isSprint &&
     state.predicted[t.id] && !t.fields['Initial Predicted'] && !_backfilling.has(t.id)
   ).forEach(t => {
     _backfilling.add(t.id);
@@ -1967,9 +1969,46 @@ function fmtPredDate(iso) {
   return `${MON[m-1]} ${d}`;
 }
 
+// ─── Sprint ↔ Tasks bridge ─────────────────────────────────────
+// Returns the sprint number that is CURRENTLY live (ignores viewOffset).
+function currentSprintNum() {
+  if (!sprintState.anchorStart) return sprintState.anchorNum || null;
+  const anchor = snapToSaturday(sprintState.anchorStart + 'T00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const periods = Math.floor((today - anchor) / (14 * 86400000));
+  return Math.max(1, sprintState.anchorNum + periods);
+}
+
+// Convert a Sprint Tasks record into the shape that the task pipeline expects.
+function adaptSprintTask(t) {
+  const adapted = { ...t, _isSprint: true, fields: { ...t.fields } };
+  const hrs = t.fields['Estimated Hours'];
+  if (hrs > 0) adapted.fields['Estimated Minutes'] = Math.round(hrs * 60);
+  if (t.fields['Due Date']) adapted.fields['Target Date'] = t.fields['Due Date'];
+  return adapted;
+}
+
+// Replace sprint tasks in state.tasks with a fresh batch, then re-render.
+function mergeSprintTasksIntoState(sprintTasks) {
+  state.tasks = state.tasks.filter(t => !t._isSprint);
+  const katTasks = sprintTasks.filter(t => (t.fields.Owner||[]).includes('Kat'));
+  state.tasks.push(...katTasks.map(adaptSprintTask));
+  refreshPredictions();
+  renderTodayTasks();
+  renderAllTasks();
+  renderWorkBar();
+  checkStaleTasks();
+}
+
 async function loadTasks() {
   try {
-    state.tasks = await AT.getTasks();
+    const num = currentSprintNum();
+    const [normalTasks, sprintTasks] = await Promise.all([
+      AT.getTasks(),
+      num ? AT.getSprintTasks(num).catch(()=>[]) : Promise.resolve([])
+    ]);
+    const katSprint = sprintTasks.filter(t=>(t.fields.Owner||[]).includes('Kat'));
+    state.tasks = [...normalTasks, ...katSprint.map(adaptSprintTask)];
     refreshPredictions();
     renderTodayTasks();
     renderAllTasks();
@@ -1981,6 +2020,7 @@ async function loadTasks() {
 function getTodayTasks() {
   return state.tasks.filter(t => {
     if (t.fields.Status==='Done'||t.fields.Status==='Deferred') return false;
+    if (t._isSprint) return true;   // always surface current-sprint commitments
     const td = t.fields['Target Date'];
     if (td) return td===state.dayKey || td<state.dayKey;   // due today or overdue
     return t.fields['Date Added']===state.dayKey;          // undated, but added today
@@ -2075,6 +2115,7 @@ function renderTaskRow(t, ctx) {
   const f = t.fields;
   const done = f.Status==='Done';
   const stale = isStale(t);
+  const isSprint = t._isSprint;
   const areas = Array.isArray(f.Area)?f.Area.join(', '):f.Area||'';
   const q = f.Priority||'';
   const qcls = q==='Q1 Do Now'?'q1':q==='Q2 Schedule'?'q2':q==='Q3 Delegate'?'q3':'q4';
@@ -2113,6 +2154,7 @@ function renderTaskRow(t, ctx) {
     <div class="task-body" onclick="openEditTask('${t.id}')" style="cursor:pointer">
       <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
       <div class="task-meta">
+        ${isSprint?`<span class="task-pill" style="background:var(--teal);color:white;font-size:10px">🎯 Sprint</span>`:''}
         ${areas?`<span class="task-pill tp-area">${esc(areas)}</span>`:''}
         ${q?`<span class="task-pill ${qcls}">${PRIO_LABEL[q]||q.split(' ')[0]}</span>`:''}
         ${minsDisplay?`<span class="task-pill tp-time">⏱ ${minsDisplay}</span>`:''}
@@ -2121,11 +2163,12 @@ function renderTaskRow(t, ctx) {
         ${stale&&!done?`<span class="task-pill tp-stale">${daysOld}d old</span>`:''}
       </div>
     </div>
-    <button class="task-del" onclick="deleteTask('${t.id}')">×</button>
+    ${isSprint?'':`<button class="task-del" onclick="deleteTask('${t.id}')">×</button>`}
   </div>`;
 }
 
 function isStale(t) {
+  if (t._isSprint) return false;  // sprint tasks are never stale
   if (!t.fields['Date Added']) return false;
   if (t.fields.Status==='Done'||t.fields.Status==='Deferred') return false;
   const days = Math.floor((Date.now()-new Date(t.fields['Date Added']))/86400000);
@@ -2179,6 +2222,7 @@ let editingTaskId = null;
 function openEditTask(id) {
   const t = state.tasks.find(t=>t.id===id);
   if (!t) return;
+  if (t._isSprint) { toast('Edit area, priority & hours on the Sprint tab 🎯'); return; }
   const f = t.fields;
   editingTaskId = id;
   document.getElementById('edit-task-name').value = f.Name||'';
@@ -2270,14 +2314,26 @@ function saveSettings() {
 
 async function applyTaskDone(id, done, actualMins) {
   try {
-    const fields = {Status: done?'Done':'Todo'};
-    if (done && actualMins) fields['Actual Minutes'] = actualMins;
-    await AT.updateTask(id, fields);
     const t = state.tasks.find(t=>t.id===id);
+    const isSprint = t?._isSprint;
+    const statusVal = done ? 'Done' : 'Todo';
+
+    if (isSprint) {
+      // Sprint task: write back to Sprint Tasks table (single record, no duplication)
+      await AT.updateSprintTask(id, {Status: statusVal});
+      // Keep sprintState in sync so sprint tab reflects the change immediately
+      const st = (sprintState.tasks||[]).find(s=>s.id===id);
+      if (st) st.fields.Status = statusVal;
+    } else {
+      const fields = {Status: statusVal};
+      if (done && actualMins) fields['Actual Minutes'] = actualMins;
+      await AT.updateTask(id, fields);
+    }
+
     if (t) {
-      t.fields.Status = done?'Done':'Todo';
-      if (done && actualMins) t.fields['Actual Minutes'] = actualMins;
-      // Auto-log to Time Log so completed tasks feed the daily ledger
+      t.fields.Status = statusVal;
+      if (!isSprint && done && actualMins) t.fields['Actual Minutes'] = actualMins;
+      // Auto-log to Time Log — same for sprint tasks and normal tasks
       if (done) {
         const mins = actualMins || t.fields['Estimated Minutes'] || 0;
         const area = Array.isArray(t.fields.Area) ? t.fields.Area[0] : t.fields.Area;
@@ -2290,10 +2346,13 @@ async function applyTaskDone(id, done, actualMins) {
       }
     }
     renderTodayTasks(); renderAllTasks(); renderWorkBar(); checkStaleTasks();
+    if (isSprint) renderSprintTasks();
   } catch(e) { toast('Error: '+e.message); }
 }
 
 async function deleteTask(id) {
+  const t = state.tasks.find(t=>t.id===id);
+  if (t?._isSprint) { toast('Remove sprint tasks from the Sprint tab 🎯'); return; }
   if (!confirm('Delete this task?')) return;
   try {
     await AT.deleteTask(id);
@@ -2558,6 +2617,8 @@ async function loadSprintData() {
     sprintState.tasks = tasks;
     sprintState.review = review;
     renderSprintTab();
+    // Keep Day/Tasks views in sync with fresh sprint data (current sprint only)
+    if (sprintState.viewOffset === 0) mergeSprintTasksIntoState(tasks);
   } catch(e) {
     document.getElementById('sprint-header-area').innerHTML = renderSprintHeaderHTML();
     const msg = (e.message||'').toLowerCase();
@@ -2651,12 +2712,6 @@ function sprintTaskHTML(t, isKat) {
   const due = f['Due Date']||'';
   const dueFmt = due ? new Date(due+'T00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
   const priColor = {'Q1 Do Now':'var(--teal)','Q2 Schedule':'var(--purple)','Q3 Delegate':'var(--amber)','Q4 Drop':'var(--gray-mid)'};
-  let pullBtn = '';
-  if (isKat && !done) {
-    pullBtn = pulled
-      ? `<button class="pull-btn pulled">✓ In plan</button>`
-      : `<button class="pull-btn" onclick="pullToDaily('${t.id}')">→ Today</button>`;
-  }
   return `<div class="sprint-task-row${done?' done':''}">
     <div class="task-check${done?' checked':''}"${isKat?` onclick="toggleSprintTaskDone('${t.id}',${!done})"`:' style="cursor:default"'}></div>
     <div class="task-body">
@@ -2670,39 +2725,28 @@ function sprintTaskHTML(t, isKat) {
         ${f.Status&&f.Status!=='Todo'?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">${f.Status==='Done'?'Done':'Deferred'}</span>`:''}
       </div>
     </div>
-    ${pullBtn}
   </div>`;
 }
 
 async function toggleSprintTaskDone(id, done) {
   try {
     await AT.updateSprintTask(id,{Status:done?'Done':'Todo'});
-    const t = sprintState.tasks.find(t=>t.id===id);
-    if (t) t.fields.Status = done?'Done':'Todo';
+    const statusVal = done?'Done':'Todo';
+    const st = sprintState.tasks.find(t=>t.id===id);
+    if (st) st.fields.Status = statusVal;
+    // Keep the merged copy in state.tasks in sync too
+    const mt = state.tasks.find(t=>t.id===id && t._isSprint);
+    if (mt) mt.fields.Status = statusVal;
     renderSprintTasks();
+    if (mt) { renderTodayTasks(); renderAllTasks(); }
     toast(done?'Done ✓':'Marked to do');
   } catch(e) { toast('Error: '+e.message); }
 }
 
-async function pullToDaily(sprintTaskId) {
-  const t = sprintState.tasks.find(t=>t.id===sprintTaskId);
-  if (!t) return;
-  const fields = {
-    'Name': t.fields.Name, 'Status': 'Todo',
-    'Date Added': state.dayKey, 'Target Date': state.dayKey,
-    'Priority': 'Q1 Do Now', 'Person': 'Kat', 'Area': ['Business']
-  };
-  if (t.fields['Estimated Hours']) fields['Estimated Minutes'] = Math.round(t.fields['Estimated Hours']*60);
-  try {
-    const r = await AT.createTask(fields);
-    state.tasks.unshift(r.records[0]);
-    await AT.updateSprintTask(sprintTaskId,{'Pulled to Daily':true});
-    t.fields['Pulled to Daily'] = true;
-    renderSprintTasks();
-    renderTodayTasks();
-    toast('Added to today ✓');
-  } catch(e) { toast('Error: '+e.message); }
-}
+// pullToDaily is superseded by auto-merge (Phase 3). Sprint tasks now appear in
+// the Day/Tasks lists automatically via mergeSprintTasksIntoState(). Stub kept
+// so any stray references don't throw a ReferenceError.
+function pullToDaily() { toast('Sprint tasks appear in your daily list automatically 🎯'); }
 
 function renderSprintReviewForm() {
   const el = document.getElementById('sprint-review-form'); if (!el) return;
@@ -2848,7 +2892,10 @@ async function addSprintTask(owner) {
       document.getElementById('new-stask-due-kat').value='';
     }
     document.getElementById(`add-sprint-task-${s}`).style.display='none';
-    renderSprintTasks(); toast('Task added');
+    renderSprintTasks();
+    // Re-merge so new task appears in Day/Tasks views immediately
+    if (s === 'kat' && sprintState.viewOffset === 0) mergeSprintTasksIntoState(sprintState.tasks);
+    toast('Task added');
   } catch(e) { toast('Error: '+e.message); }
 }
 
