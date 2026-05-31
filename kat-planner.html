@@ -301,7 +301,12 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 .uday-wrap{display:flex;align-items:center;gap:6px;padding:6px 0;color:var(--gray);font-size:12px;opacity:.7}
 .uday-allday{background:rgba(99,102,241,.07);border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;color:#4338CA}
 .uday-resched{font-size:11px;color:var(--gray);margin-bottom:8px;padding:4px 8px;background:var(--gray-light);border-radius:6px;font-style:italic}
-.uday-more{font-size:11px;color:var(--teal);cursor:pointer;padding:2px 6px;border:none;background:none}
+.uday-more{font-size:11px;color:var(--teal);cursor:pointer;padding:4px 6px;border:none;background:none;list-style:none}
+.uday-more-wrap{margin-top:2px}
+.uday-more-wrap[open] .uday-more{font-weight:600}
+.uday-swap-row{display:flex;align-items:center;gap:8px;padding:4px 6px 4px 14px;border-top:1px dashed var(--gray-light)}
+.uday-swap-btn{font-size:10px;font-weight:700;color:var(--teal);background:var(--teal-light);border:none;border-radius:5px;padding:3px 8px;cursor:pointer;flex-shrink:0}
+.uday-swap-btn:active{opacity:.7}
 </style>
 </head>
 <body>
@@ -2171,12 +2176,13 @@ async function loadTasks() {
 }
 
 function getTasksForDate(dateStr, isToday) {
+  const todayOrFuture = dateStr >= state.dayKey;
   return state.tasks.filter(t => {
     if (t.fields.Status==='Done'||t.fields.Status==='Deferred') return false;
     if (t._isSprint) return true;   // always surface current-sprint commitments
     const td = t.fields['Target Date'];
-    if (td) return td <= dateStr;   // due on or before that day (overdue rolls forward)
-    return isToday && t.fields['Date Added']===state.dayKey; // undated tasks only show today
+    if (td) return td <= dateStr;   // dated: show on/after due (overdue rolls forward)
+    return todayOrFuture;           // undated backlog: eligible to schedule today + future
   });
 }
 function getTodayTasks() { return getTasksForDate(state.dayKey, true); }
@@ -2933,8 +2939,83 @@ function parseIcal(text) {
     if (prop === 'TRANSP')   ev.transp  = val.toUpperCase();   // OPAQUE, TRANSPARENT
     if (prop === 'X-MICROSOFT-CDO-BUSYSTATUS') ev.busyStatus = val.toUpperCase(); // BUSY, FREE, OOF, TENTATIVE
     if (prop === 'LOCATION') ev.location = val.replace(/\\,/g,',').replace(/\\;/g,';');
+    if (prop === 'RRULE') ev._rrule = val;
+    if (prop === 'EXDATE') {
+      ev._exdates = ev._exdates || [];
+      val.split(',').forEach(v => { try { ev._exdates.push(localDateStr(parseIcalDt(v).date)); } catch(e){} });
+    }
   }
   return events.filter(e => e.status !== 'CANCELLED');
+}
+
+// Expand recurring (RRULE) events into individual occurrences within a window
+// (yesterday → +90 days). Non-recurring events pass through unchanged.
+// Handles FREQ=DAILY/WEEKLY/MONTHLY with INTERVAL, COUNT, UNTIL, BYDAY, BYMONTHDAY, EXDATE.
+function expandRecurringEvents(events) {
+  const DOW = { SU:0, MO:1, TU:2, WE:3, TH:4, FR:5, SA:6 };
+  const rangeStart = new Date(); rangeStart.setHours(0,0,0,0); rangeStart.setDate(rangeStart.getDate()-1);
+  const rangeEnd = new Date(rangeStart); rangeEnd.setDate(rangeEnd.getDate()+91);
+  const out = [];
+
+  for (const ev of events) {
+    if (!ev._rrule || !ev.start) { out.push(ev); continue; }
+    const parts = {};
+    ev._rrule.split(';').forEach(kv => { const [k,v] = kv.split('='); if (k) parts[k.toUpperCase()] = v; });
+    const freq = parts.FREQ;
+    const interval = parseInt(parts.INTERVAL) || 1;
+    const count = parts.COUNT ? parseInt(parts.COUNT) : null;
+    let until = null;
+    if (parts.UNTIL) { try { until = parseIcalDt(parts.UNTIL).date; } catch(e){} }
+    const byday = parts.BYDAY ? parts.BYDAY.split(',').map(d => DOW[d.replace(/^[+-]?\d+/,'')]).filter(n=>n!=null) : null;
+    const base = ev.start;
+    const durMs = (ev.end && ev.start) ? (ev.end - ev.start) : 30*60000;
+    const exset = new Set(ev._exdates || []);
+    let generated = 0;
+    const MAX = 800;
+
+    const emit = (occ) => {
+      if (occ < rangeStart || occ > rangeEnd) return;
+      if (until && occ > until) return;
+      if (exset.has(localDateStr(occ))) return;
+      out.push({ ...ev, start: new Date(occ), end: new Date(occ.getTime()+durMs), _rrule: null, _exdates: null });
+    };
+
+    if (freq === 'WEEKLY') {
+      const days = (byday && byday.length) ? byday : [base.getDay()];
+      let wk = new Date(base); wk.setDate(base.getDate() - base.getDay()); // Sunday of base week
+      for (let w = 0; w < MAX; w++) {
+        const wkBase = new Date(wk); wkBase.setDate(wk.getDate() + w*7*interval);
+        if (wkBase > rangeEnd) break;
+        if (until && wkBase > until) break;
+        for (const dow of days) {
+          const occ = new Date(wkBase); occ.setDate(wkBase.getDate()+dow);
+          occ.setHours(base.getHours(), base.getMinutes(), 0, 0);
+          if (occ < base) continue;
+          if (count && generated >= count) break;
+          generated++; emit(occ);
+        }
+        if (count && generated >= count) break;
+      }
+    } else if (freq === 'DAILY') {
+      let cur = new Date(base);
+      for (let i = 0; i < MAX; i++) {
+        if (cur > rangeEnd || (until && cur > until) || (count && generated >= count)) break;
+        generated++; emit(new Date(cur));
+        cur.setDate(cur.getDate() + interval);
+      }
+    } else if (freq === 'MONTHLY') {
+      const mday = parts.BYMONTHDAY ? parseInt(parts.BYMONTHDAY) : base.getDate();
+      let cur = new Date(base);
+      for (let i = 0; i < MAX; i++) {
+        if (cur > rangeEnd || (until && cur > until) || (count && generated >= count)) break;
+        generated++; emit(new Date(cur));
+        cur.setMonth(cur.getMonth() + interval); cur.setDate(mday);
+      }
+    } else {
+      out.push(ev); // unsupported FREQ — keep single occurrence
+    }
+  }
+  return out;
 }
 
 // Classify a calendar event: 'hidden' | 'appointment' | 'travel' | 'meeting'
@@ -2968,11 +3049,11 @@ async function fetchAndCacheCalEvents() {
       parseIcal(await r.text()).forEach(e => results.push({ ...e, source: src }));
     } catch(e) { console.warn(`Cal fetch ${src}:`, e.message); }
   }
-  state.calEvents = results;
+  state.calEvents = expandRecurringEvents(results); // expand recurring meetings into occurrences
   try {
     localStorage.setItem('kat-cal-cache', JSON.stringify({
       ts: Date.now(),
-      events: results.map(e => ({ ...e, start: e.start?.toISOString(), end: e.end?.toISOString() }))
+      events: state.calEvents.map(e => ({ ...e, start: e.start?.toISOString(), end: e.end?.toISOString() }))
     }));
   } catch(e) {}
   renderDayPlan();
@@ -3278,29 +3359,48 @@ function buildTodayBlocks(targetDate) {
     tasks: [], calEvents: [], nudge: '', noteKey: null
   });
 
-  // Assign tasks to blocks
+  // Assign tasks to blocks — FILL each block up to its available minutes,
+  // pulling from the prioritised backlog, and cap total Work Work task-minutes
+  // at the day's work ceiling (which already includes email time).
   const todayTasks = getTasksForDate(dateStr, isToday);
   const assignedTaskIds = new Set();
+  const DEFAULT_TASK_MINS = 30; // assume 30m for unestimated tasks when filling
 
-  function assignTasksToBlock(blk, areas) {
-    const filtered = todayTasks.filter(t => {
+  // Work Work task budget = work ceiling − email time already spent in email blocks.
+  let workTaskBudget = Math.max(0, Math.round((day.work || 0) * 60) - totalEmailMins);
+
+  // Fill blk with tasks matching `areas`, up to `maxMins`. If `sharedBudget` is
+  // 'work', also draw down workTaskBudget. Overflow tasks are recorded for swapping.
+  function fillBlock(blk, areas, maxMins, sharedBudget) {
+    const pool = todayTasks.filter(t => {
       if (assignedTaskIds.has(t.id)) return false;
-      const taskArea = Array.isArray(t.fields.Area) ? t.fields.Area[0] : (t.fields.Area || '');
-      return areas.includes(taskArea) || (areas.includes('__unassigned__') && !taskArea);
-    });
-    filtered.sort(prioSort);
-    const cap = 8;
-    blk.tasks = filtered.slice(0, cap);
-    blk.tasks.forEach(t => assignedTaskIds.add(t.id));
-    blk._extraTasks = Math.max(0, filtered.length - cap);
+      const a = Array.isArray(t.fields.Area) ? t.fields.Area[0] : (t.fields.Area || '');
+      return areas.includes(a) || (areas.includes('__unassigned__') && !a);
+    }).sort(prioSort);
+
+    let used = 0;
+    blk.tasks = [];
+    blk._overflowTasks = [];
+    for (const t of pool) {
+      const m = t.fields['Estimated Minutes'] || DEFAULT_TASK_MINS;
+      const budgetLeft = sharedBudget === 'work' ? Math.min(maxMins - used, workTaskBudget) : (maxMins - used);
+      // Always allow the first task; after that, only add if it fits the budget
+      if (blk.tasks.length > 0 && m > budgetLeft) { blk._overflowTasks.push(t); continue; }
+      blk.tasks.push(t);
+      assignedTaskIds.add(t.id);
+      used += m;
+      if (sharedBudget === 'work') workTaskBudget -= m;
+    }
+    blk._fillMins = used;
+    blk._extraTasks = blk._overflowTasks.length;
   }
 
   for (const blk of blocks) {
     if (blk.type !== 'work-block') continue;
-    if (blk.id === 'biz-morning') assignTasksToBlock(blk, ['Business']);
-    else if (blk.id === 'work-deep') assignTasksToBlock(blk, ['Work Work', '__unassigned__']); // deep/Q1 work first
-    else if (blk.id === 'exercise') assignTasksToBlock(blk, ['Health & Fitness']);
-    else if (blk.id === 'afternoon') assignTasksToBlock(blk, ['Work Work', '__unassigned__', 'Admin']); // leftover work + admin
+    if (blk.id === 'biz-morning')      fillBlock(blk, ['Business'], blk.durationMins);
+    else if (blk.id === 'work-deep')   fillBlock(blk, ['Work Work', '__unassigned__'], blk.durationMins, 'work');
+    else if (blk.id === 'exercise')    fillBlock(blk, ['Health & Fitness'], blk.durationMins);
+    else if (blk.id === 'afternoon')   fillBlock(blk, ['Work Work', '__unassigned__', 'Admin'], blk.durationMins, 'work');
   }
 
   // ── Gather all meetings for this date: calendar (iCal) + standing + custom ──
@@ -3321,26 +3421,7 @@ function buildTodayBlocks(targetDate) {
     });
   });
 
-  // 2. Standing meetings for this weekday. Skip a standing entry only if the
-  // calendar already holds the SAME meeting (similar title near the same time),
-  // so genuinely different meetings at the same hour both still show.
-  const sigWords = s => (s||'').toLowerCase().match(/[a-z]{4,}/g) || [];
-  const dayName = DAYS[date.getDay()];
-  (STANDING[dayName] || []).forEach(m => {
-    const p = parseMeetingTimeStr(m.time);
-    if (!p) return;
-    const myWords = sigWords(m.name);
-    const dup = meetingObjs.some(mo => {
-      if (Math.abs(mo.startMins - p.startMins) > 30) return false;
-      const moWords = sigWords(mo.title);
-      return myWords.some(w => moWords.includes(w)); // shares a significant word
-    });
-    if (dup) return;
-    meetingObjs.push({
-      startMins: p.startMins, durationMins: p.durMins, title: m.name,
-      icon: '👥', color: KIND_COLOR.standing, kind: 'standing'
-    });
-  });
+  // (Standing meetings removed — the connected calendar is the source of truth.)
 
   // 3. Custom meetings (today only)
   if (isToday) {
@@ -3514,18 +3595,38 @@ function renderUnifiedSchedule(targetDate) {
           <button class="uday-start${isRunning?' running':''}" onclick="event.stopPropagation();startTaskTimer('${taskArea}','${(f.Name||'').replace(/'/g,"\\'")}')">▶</button>
         </div>`;
       }
+      // Swap list: overflow / backlog tasks available to pull into this block
       if (blk._extraTasks > 0) {
-        tasksHtml += `<button class="uday-more">+ ${blk._extraTasks} more</button>`;
+        const swapRows = (blk._overflowTasks || []).map(t => {
+          const f = t.fields;
+          const ta = Array.isArray(f.Area) ? f.Area[0] : (f.Area || '');
+          const m = f['Estimated Minutes'];
+          const ms = m ? (m>=60?`${Math.floor(m/60)}h${m%60?m%60+'m':''}`:`${m}m`) : '';
+          return `<div class="uday-swap-row">
+            <div style="flex:1;cursor:pointer" onclick="openEditTask('${t.id}')">
+              <span class="uday-task-name">${esc(f.Name||'')}</span>
+              <span class="uday-task-meta"> ${ms}${ta?' · '+ta:''}</span>
+            </div>
+            <button class="uday-swap-btn" title="Bump to top (Q1) so it schedules into this block"
+              onclick="event.stopPropagation();bumpTaskPriority('${t.id}')">↑ swap in</button>
+          </div>`;
+        }).join('');
+        tasksHtml += `<details class="uday-more-wrap"><summary class="uday-more">+ ${blk._extraTasks} more in backlog — tap to swap</summary>${swapRows}</details>`;
       }
       if (!blk.tasks.length) {
         tasksHtml = `<div class="text-sm text-gray" style="padding:3px 6px;font-style:italic">No tasks queued for this block</div>`;
       }
+
+      // Fill indicator: how much of the block's time is queued
+      const fillMins = blk._fillMins || 0;
+      const fillStr = fillMins > 0 ? `${fh(fillMins)} of ${fh(blk.durationMins)} queued` : '';
 
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
         <div class="uday-blk-hdr">
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+          ${fillStr?`<span style="margin-left:auto;font-size:10px;color:var(--gray)">${fillStr}</span>`:''}
         </div>
         ${tasksHtml}
         ${calHtmlFor(blk)}
@@ -3544,6 +3645,19 @@ function startTaskTimer(area, taskName) {
   renderTimerBanner();
   renderUnifiedSchedule();
   toast('⏱ ' + taskName);
+}
+
+// Swap a backlog task into a block by bumping its priority to Q1 (sorts to top).
+async function bumpTaskPriority(id) {
+  const t = state.tasks.find(x => x.id === id);
+  if (!t) return;
+  t.fields.Priority = 'Q1 Do Now';          // optimistic
+  renderUnifiedSchedule();
+  try {
+    if (t._isSprint) await AT.updateSprintTask(id, { Priority: 'Q1 Do Now' });
+    else await AT.updateTask(id, { Priority: 'Q1 Do Now' });
+    toast('Swapped in ↑');
+  } catch(e) { toast('Error: ' + e.message); }
 }
 
 function rescheduleDay() {
