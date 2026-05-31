@@ -970,9 +970,24 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
       <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">Outlook iCal URL</label>
       <input type="url" id="cal-url-outlook" class="form-input" style="width:100%" placeholder="https://outlook.live.com/owa/…/calendar.ics"/>
     </div>
-    <div style="margin-bottom:18px">
+    <div style="margin-bottom:14px">
       <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">Google Calendar iCal URL</label>
       <input type="url" id="cal-url-google" class="form-input" style="width:100%" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"/>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Event classification</div>
+    <div style="font-size:12px;color:var(--gray);margin-bottom:10px;line-height:1.5">Comma-separated keywords. Events whose title contains a match are classified accordingly (case-insensitive).</div>
+    <div style="margin-bottom:8px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">🚫 Hidden (not shown in planner)</label>
+      <input type="text" id="cal-pat-hidden" class="form-input" style="width:100%" placeholder="KMP Busy,Busy,Focus Time,Blocked,Hold"/>
+    </div>
+    <div style="margin-bottom:8px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">📅 Appointments</label>
+      <input type="text" id="cal-pat-appt" class="form-input" style="width:100%" placeholder="Doctor,Dentist,Physio,Therapy,Medical,Appointment"/>
+    </div>
+    <div style="margin-bottom:18px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">✈️ Travel / commute</label>
+      <input type="text" id="cal-pat-travel" class="form-input" style="width:100%" placeholder="Flight,Travel,Commute,Drive to,Airport"/>
     </div>
 
     <div class="flex gap8">
@@ -1921,11 +1936,12 @@ function togglePDone(i) { state.priorities[i].done=!state.priorities[i].done; sa
 function renderMeetings() {
   const standing = STANDING[state.dayName]||[];
   const custom = state.customMeetings;
-  // Calendar events for today (non-all-day only)
-  const calToday = getEventsForDate(state.dayKey).filter(e => !e.allDay).map(e => {
+  // Calendar events for today — visible, non-all-day, labelled by type
+  const KIND_LABEL = { appointment:'📅 Appt', travel:'✈️ Travel', meeting:'👥 Meeting' };
+  const calToday = getVisibleEventsForDate(state.dayKey).filter(e => !e.allDay).map(e => {
     const d = e.start instanceof Date ? e.start : new Date(e.start);
-    return { time: d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), name: e.title||'Event',
-      badge:'badge-alt', label: e.source==='outlook' ? '📧 Outlook' : '📅 Google' };
+    return { time: d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
+      name: e.title||'Event', badge:'badge-alt', label: KIND_LABEL[e.kind]||'📅 Cal' };
   });
   const el = document.getElementById('meetings-body');
   const all = [...standing, ...custom, ...calToday];
@@ -2361,9 +2377,12 @@ function openSettings() {
   document.getElementById('settings-floor-ex').textContent = SCHEDULE.floors.exercise;
   document.getElementById('settings-rest-list').innerHTML = SCHEDULE.activeRest.map(r=>`<li>${esc(r)}</li>`).join('');
 
-  const calUrls = loadCalUrls();
-  const oel = document.getElementById('cal-url-outlook'); if (oel) oel.value = calUrls.outlook||'';
-  const gel = document.getElementById('cal-url-google');  if (gel) gel.value = calUrls.google||'';
+  const calCfg = loadCalUrls();
+  const oel = document.getElementById('cal-url-outlook');  if (oel) oel.value = calCfg.outlook||'';
+  const gel = document.getElementById('cal-url-google');   if (gel) gel.value = calCfg.google||'';
+  const hel = document.getElementById('cal-pat-hidden');   if (hel) hel.value = calCfg.hiddenPatterns||'KMP Busy,Busy,Focus Time,Blocked,Hold,Do Not Schedule';
+  const ael = document.getElementById('cal-pat-appt');     if (ael) ael.value = calCfg.apptPatterns||'Doctor,Dentist,Physio,Therapy,Medical,Appointment,Checkup';
+  const tel = document.getElementById('cal-pat-travel');   if (tel) tel.value = calCfg.travelPatterns||'Flight,Travel,Commute,Drive to,Airport,Train,Uber,Taxi';
 
   document.getElementById('settings-modal').style.display='flex';
 }
@@ -2382,14 +2401,22 @@ function saveSettings() {
   });
   saveSchedule();
   // Save calendar URLs and refresh events if changed
-  const newCalUrls = {
-    outlook: (document.getElementById('cal-url-outlook')?.value||'').trim(),
-    google:  (document.getElementById('cal-url-google')?.value||'').trim()
+  const oldCalCfg = loadCalUrls();
+  const newCalCfg = {
+    outlook:        (document.getElementById('cal-url-outlook')?.value||'').trim(),
+    google:         (document.getElementById('cal-url-google')?.value||'').trim(),
+    hiddenPatterns: (document.getElementById('cal-pat-hidden')?.value||'').trim(),
+    apptPatterns:   (document.getElementById('cal-pat-appt')?.value||'').trim(),
+    travelPatterns: (document.getElementById('cal-pat-travel')?.value||'').trim()
   };
-  const oldCalUrls = loadCalUrls();
-  saveCalUrls(newCalUrls);
-  if (newCalUrls.outlook !== oldCalUrls.outlook || newCalUrls.google !== oldCalUrls.google) {
+  saveCalUrls(newCalCfg);
+  // Re-fetch if URLs changed; just re-render if only patterns changed
+  if (newCalCfg.outlook !== oldCalCfg.outlook || newCalCfg.google !== oldCalCfg.google) {
     fetchAndCacheCalEvents(); // non-blocking
+  } else if (newCalCfg.hiddenPatterns !== oldCalCfg.hiddenPatterns ||
+             newCalCfg.apptPatterns   !== oldCalCfg.apptPatterns   ||
+             newCalCfg.travelPatterns !== oldCalCfg.travelPatterns) {
+    renderDayPlan(); renderMeetings(); // re-classify without re-fetching
   }
   closeSettings();
   toast('Schedule saved');
@@ -2770,9 +2797,31 @@ function parseIcal(text) {
     if (prop === 'SUMMARY') ev.title = val.replace(/\\n/g,' ').replace(/\\[,;]/g, m => m[1]);
     if (prop === 'DTSTART') { const p = parseIcalDt(val); ev.start = p.date; ev.allDay = p.allDay; }
     if (prop === 'DTEND')   { const p = parseIcalDt(val); ev.end   = p.date; }
-    if (prop === 'STATUS')   ev.status = val.toUpperCase();
+    if (prop === 'STATUS')   ev.status  = val.toUpperCase();
+    if (prop === 'CLASS')    ev.cls     = val.toUpperCase();   // PUBLIC, PRIVATE, CONFIDENTIAL
+    if (prop === 'TRANSP')   ev.transp  = val.toUpperCase();   // OPAQUE, TRANSPARENT
+    if (prop === 'X-MICROSOFT-CDO-BUSYSTATUS') ev.busyStatus = val.toUpperCase(); // BUSY, FREE, OOF, TENTATIVE
+    if (prop === 'LOCATION') ev.location = val.replace(/\\,/g,',').replace(/\\;/g,';');
   }
   return events.filter(e => e.status !== 'CANCELLED');
+}
+
+// Classify a calendar event: 'hidden' | 'appointment' | 'travel' | 'meeting'
+function classifyCalEvent(ev) {
+  const cfg = loadCalUrls();
+  const title = (ev.title || '').toLowerCase().trim();
+
+  // Patterns are comma-separated strings stored in cal config
+  const toList = str => (str||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+
+  const hiddenPats = toList(cfg.hiddenPatterns || 'KMP Busy,Busy,Focus Time,Deep Work,Blocked,Hold,Do Not Schedule');
+  const apptPats   = toList(cfg.apptPatterns   || 'Doctor,Dentist,Physio,Therapy,Medical,Optom,Vet,Appointment,Checkup');
+  const travelPats = toList(cfg.travelPatterns  || 'Flight,Travel,Commute,Drive to,Train,Airport,Uber,Taxi,Bus to');
+
+  if (hiddenPats.some(p => title.includes(p))) return 'hidden';
+  if (apptPats.some(p   => title.includes(p))) return 'appointment';
+  if (travelPats.some(p => title.includes(p))) return 'travel';
+  return 'meeting';
 }
 
 async function fetchAndCacheCalEvents() {
@@ -2812,7 +2861,13 @@ function getEventsForDate(dateStr) {
   return (state.calEvents || []).filter(e => {
     const d = e.start instanceof Date ? e.start : (e.start ? new Date(e.start) : null);
     return d && d.toISOString().slice(0,10) === dateStr;
-  }).sort((a,b) => new Date(a.start) - new Date(b.start));
+  }).map(e => ({ ...e, kind: classifyCalEvent(e) }))   // attach classification
+    .sort((a,b) => new Date(a.start) - new Date(b.start));
+}
+
+// Only events that should actually appear in the planner (hidden = filtered out)
+function getVisibleEventsForDate(dateStr) {
+  return getEventsForDate(dateStr).filter(e => e.kind !== 'hidden');
 }
 
 // ─── Schedule timeline ─────────────────────────────────────────
@@ -2861,18 +2916,21 @@ function renderScheduleTimeline(schedKey, date) {
     cursor += dur;
   }
 
-  // Insert calendar events (non-all-day, within day bounds)
+  // Insert calendar events (visible, non-all-day, within day bounds)
   const wrapMins = timeToMins(day.wrapEnd || '17:30');
   const startMins = timeToMins(day.start || '06:30');
-  const calEvs = getEventsForDate(dateStr);
+  const calEvs = getVisibleEventsForDate(dateStr);
+  const KIND_ICON  = { appointment:'📅', travel:'✈️', meeting:'👥' };
+  const KIND_COLOR = { appointment:'var(--amber)', travel:'#3B82F6', meeting:'#6366f1' };
   calEvs.filter(e => !e.allDay).forEach(e => {
     const d = e.start instanceof Date ? e.start : new Date(e.start);
     const sm = d.getHours() * 60 + d.getMinutes();
     if (sm < startMins || sm >= wrapMins) return;
     const ed = e.end instanceof Date ? e.end : (e.end ? new Date(e.end) : null);
     const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
-    blocks.push({ type:'cal', label: e.title||'Event', icon:'📅', startMins: sm, dur,
-      badge: e.source === 'outlook' ? '📧' : '📅' });
+    blocks.push({ type:'cal', label: e.title||'Event',
+      icon: KIND_ICON[e.kind]||'📅', color: KIND_COLOR[e.kind]||'#6366f1',
+      startMins: sm, dur });
   });
 
   blocks.sort((a,b) => a.startMins - b.startMins);
@@ -2880,7 +2938,7 @@ function renderScheduleTimeline(schedKey, date) {
   const fh = m => m >= 60 ? `${(m/60).toFixed(1)}h` : `${m}m`;
   let html = '<div class="sched-list">';
 
-  // All-day events banner
+  // All-day events banner (visible only)
   const allDay = calEvs.filter(e => e.allDay);
   if (allDay.length) {
     html += `<div class="sched-row" style="background:rgba(99,102,241,.06);border-radius:6px;padding:5px 8px;margin-bottom:4px">
@@ -2892,9 +2950,9 @@ function renderScheduleTimeline(schedKey, date) {
   for (const b of blocks) {
     const tl = minsToTime(b.startMins);
     if (b.type === 'cal') {
-      html += `<div class="sched-row sched-cal-row">
+      html += `<div class="sched-row sched-cal-row" style="border-left:3px solid ${b.color||'#6366f1'};padding-left:6px">
         <div class="sched-time">${tl}</div>
-        <div class="sched-body"><div class="sched-label">${b.icon} ${esc(b.label)} <span class="sched-dur">${fh(b.dur)}</span></div></div>
+        <div class="sched-body"><div class="sched-label" style="color:${b.color||'#6366f1'}">${b.icon} ${esc(b.label)} <span class="sched-dur">${fh(b.dur)}</span></div></div>
       </div>`;
     } else {
       const tasks = getTasksForBlock(date, b.area);
