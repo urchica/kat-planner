@@ -352,13 +352,18 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         </div>
       </div>
 
-      <!-- Unified schedule card (today only; future-day preview lives in day-plan-body below) -->
+      <!-- Unified schedule card — today + look-forward preview -->
       <div class="card" id="unified-schedule-card">
-        <div class="card-header">
-          <span class="card-title"><span class="dot" style="background:var(--teal)"></span>Today's schedule</span>
+        <div class="card-header" style="flex-wrap:wrap;gap:6px">
+          <div class="flex gap8 items-center">
+            <button class="plan-nav-btn" id="sched-prev-btn" onclick="shiftPreview(-1)" disabled>◀</button>
+            <span class="card-title" id="sched-card-title"><span class="dot" style="background:var(--teal)"></span>Today's schedule</span>
+            <button class="plan-nav-btn" id="sched-next-btn" onclick="shiftPreview(1)">▶</button>
+          </div>
           <div class="flex gap8">
-            <button class="btn btn-ghost btn-sm" onclick="toggleAddMeeting()">+ Meeting</button>
-            <button class="btn btn-ghost btn-sm" onclick="rescheduleDay()">↻ Reschedule</button>
+            <button class="btn btn-ghost btn-sm" id="sched-back-btn" style="display:none" onclick="resetPreview()">← Today</button>
+            <button class="btn btn-ghost btn-sm" id="sched-mtg-btn" onclick="toggleAddMeeting()">+ Meeting</button>
+            <button class="btn btn-ghost btn-sm" id="sched-resched-btn" onclick="rescheduleDay()">↻ Reschedule</button>
           </div>
         </div>
         <!-- Add-meeting form (moved here from old Meetings card) -->
@@ -396,14 +401,8 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         </div>
       </div>
 
-      <!-- Future-day plan preview (shown when previewOffset > 0 from the day-plan-body card) -->
-      <div class="card" id="day-plan-card">
-        <div class="card-header">
-          <span class="card-title"><span class="dot" style="background:var(--amber)"></span>Today's plan</span>
-          <button class="btn btn-ghost btn-sm" onclick="openReplan()">↻ Re-plan</button>
-        </div>
-        <div class="card-body" id="day-plan-body"><!-- rendered by JS --></div>
-      </div>
+      <!-- day-plan-body kept as hidden stub for legacy JS compatibility -->
+      <div id="day-plan-card" style="display:none"><div id="day-plan-body"></div></div>
 
       <!-- Time today -->
       <div class="card">
@@ -1008,8 +1007,16 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         <input type="number" id="ds-breakfast" class="form-input" min="5" step="5" style="width:100%"/>
       </div>
       <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">📧 Morning email check (mins)</label>
+        <input type="number" id="ds-email-morning" class="form-input" min="0" step="5" style="width:100%"/>
+      </div>
+      <div>
         <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Lunch &amp; Learn (mins)</label>
         <input type="number" id="ds-lunch-learn" class="form-input" min="15" step="15" style="width:100%"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">📧 Australia email (mins)</label>
+        <input type="number" id="ds-email-afternoon" class="form-input" min="0" step="5" style="width:100%"/>
       </div>
       <div>
         <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Close-down buffer (mins)</label>
@@ -1497,36 +1504,44 @@ function computeDayPlan(level, schedKey) {
 }
 
 function renderDayPlan() {
-  const el = document.getElementById('day-plan-body');
-  const planCard = document.getElementById('day-plan-card');
-  const unifiedCard = document.getElementById('unified-schedule-card');
-  if (!el) return;
-
   const preview = previewOffset > 0;
+  const bodyEl = document.getElementById('unified-schedule-body');
+  if (!bodyEl) return;
 
-  // Show/hide cards based on preview mode
-  if (planCard) planCard.style.display = preview ? 'block' : 'none';
-  if (unifiedCard) unifiedCard.style.display = preview ? 'none' : 'block';
+  // Update navigation controls
+  const titleEl  = document.getElementById('sched-card-title');
+  const prevBtn  = document.getElementById('sched-prev-btn');
+  const nextBtn  = document.getElementById('sched-next-btn');
+  const backBtn  = document.getElementById('sched-back-btn');
+  const reschBtn = document.getElementById('sched-resched-btn');
+  const mtgBtn   = document.getElementById('sched-mtg-btn');
 
-  if (!preview) {
-    // Today: render the unified schedule instead
-    renderUnifiedSchedule();
-    return;
+  if (prevBtn)  prevBtn.disabled  = previewOffset === 0;
+  if (nextBtn)  nextBtn.disabled  = previewOffset >= 7;
+  if (backBtn)  backBtn.style.display  = preview ? '' : 'none';
+  if (reschBtn) reschBtn.style.display = preview ? 'none' : '';
+  if (mtgBtn)   mtgBtn.style.display   = preview ? 'none' : '';
+
+  if (titleEl) {
+    titleEl.innerHTML = preview
+      ? `<span class="dot" style="background:var(--amber)"></span>${esc(previewDayLabel())} <span class="plan-preview-badge">preview</span>`
+      : `<span class="dot" style="background:var(--teal)"></span>Today's schedule`;
   }
 
-  // Future-day preview: show the schedule timeline
-  const schedKey = previewSchedKey();
-  const level = previewDefaultLevel();
-  const lc = LEVEL_CONFIG[level];
-  const nav = `<div class="plan-nav">
-      <button class="plan-nav-btn" onclick="shiftPreview(-1)">◀</button>
-      <span class="plan-nav-day">${esc(previewDayLabel())}</span>
-      <button class="plan-nav-btn" onclick="shiftPreview(1)"${previewOffset>=7?' disabled':''}>▶</button>
-      <button class="plan-nav-today" onclick="resetPreview()">Back to today</button>
-    </div>`;
+  // Add-task bar: hide when previewing a future day
+  const addTaskBar = document.querySelector('#unified-schedule-card [style*="border-top"]');
+  if (addTaskBar) addTaskBar.style.display = preview ? 'none' : '';
 
-  const levelLine = `<div class="text-sm text-gray" style="margin-bottom:8px"><strong style="color:var(--black)">${lc.label}</strong> · default for ${esc(previewDayLabel())} <span class="plan-preview-badge">preview</span></div>`;
-  el.innerHTML = nav + levelLine + renderScheduleTimeline(schedKey, previewDate());
+  if (!preview) {
+    renderUnifiedSchedule();
+  } else {
+    // Future day: schedule timeline into the same body
+    const schedKey = previewSchedKey();
+    const level = previewDefaultLevel();
+    const lc = LEVEL_CONFIG[level];
+    const levelLine = `<div class="text-sm text-gray" style="margin-bottom:8px"><strong style="color:var(--black)">${lc.label}</strong> · default for ${esc(previewDayLabel())}</div>`;
+    bodyEl.innerHTML = levelLine + renderScheduleTimeline(schedKey, previewDate());
+  }
 }
 
 // ─── Mid-day re-projection ───────────────────────────────────────
@@ -2425,11 +2440,13 @@ function openSettings() {
 
   // Populate day structure fields
   const ds = loadDayStructure();
-  const dsBiz = document.getElementById('ds-biz-morning'); if (dsBiz) dsBiz.value = ds.bizMorningHours;
-  const dsBfst = document.getElementById('ds-breakfast'); if (dsBfst) dsBfst.value = ds.breakfastMins;
-  const dsLL = document.getElementById('ds-lunch-learn'); if (dsLL) dsLL.value = ds.lunchLearnMins;
-  const dsBuf = document.getElementById('ds-buffer'); if (dsBuf) dsBuf.value = ds.bufferMins;
-  const dsGoal = document.getElementById('ds-ll-goal'); if (dsGoal) dsGoal.value = ds.lunchLearnGoal || '';
+  const dsBiz  = document.getElementById('ds-biz-morning');    if (dsBiz)  dsBiz.value  = ds.bizMorningHours;
+  const dsBfst = document.getElementById('ds-breakfast');       if (dsBfst) dsBfst.value = ds.breakfastMins;
+  const dsEM   = document.getElementById('ds-email-morning');   if (dsEM)   dsEM.value   = ds.emailMorningMins;
+  const dsLL   = document.getElementById('ds-lunch-learn');     if (dsLL)   dsLL.value   = ds.lunchLearnMins;
+  const dsEA   = document.getElementById('ds-email-afternoon'); if (dsEA)   dsEA.value   = ds.emailAfternoonMins;
+  const dsBuf  = document.getElementById('ds-buffer');          if (dsBuf)  dsBuf.value  = ds.bufferMins;
+  const dsGoal = document.getElementById('ds-ll-goal');         if (dsGoal) dsGoal.value = ds.lunchLearnGoal || '';
 
   document.getElementById('settings-modal').style.display='flex';
 }
@@ -2449,10 +2466,12 @@ function saveSettings() {
   saveSchedule();
   // Save day structure
   const newDs = {
-    bizMorningHours: parseFloat(document.getElementById('ds-biz-morning')?.value) || DEFAULT_DAY_STRUCT.bizMorningHours,
-    breakfastMins:   parseInt(document.getElementById('ds-breakfast')?.value)     || DEFAULT_DAY_STRUCT.breakfastMins,
-    lunchLearnMins:  parseInt(document.getElementById('ds-lunch-learn')?.value)   || DEFAULT_DAY_STRUCT.lunchLearnMins,
-    bufferMins:      parseInt(document.getElementById('ds-buffer')?.value)        || DEFAULT_DAY_STRUCT.bufferMins,
+    bizMorningHours:    parseFloat(document.getElementById('ds-biz-morning')?.value)    || DEFAULT_DAY_STRUCT.bizMorningHours,
+    breakfastMins:      parseInt(document.getElementById('ds-breakfast')?.value)        || DEFAULT_DAY_STRUCT.breakfastMins,
+    emailMorningMins:   parseInt(document.getElementById('ds-email-morning')?.value)    ?? DEFAULT_DAY_STRUCT.emailMorningMins,
+    lunchLearnMins:     parseInt(document.getElementById('ds-lunch-learn')?.value)      || DEFAULT_DAY_STRUCT.lunchLearnMins,
+    emailAfternoonMins: parseInt(document.getElementById('ds-email-afternoon')?.value)  ?? DEFAULT_DAY_STRUCT.emailAfternoonMins,
+    bufferMins:         parseInt(document.getElementById('ds-buffer')?.value)           || DEFAULT_DAY_STRUCT.bufferMins,
     lunchLearnGoal:  (document.getElementById('ds-ll-goal')?.value || '').trim()
   };
   saveDayStructure(newDs);
@@ -3047,7 +3066,7 @@ function renderScheduleTimeline(schedKey, date) {
 }
 
 // ─── Day Structure ─────────────────────────────────────────────
-const DEFAULT_DAY_STRUCT = { bizMorningHours:2, breakfastMins:15, lunchLearnMins:60, bufferMins:30, lunchLearnGoal:'' };
+const DEFAULT_DAY_STRUCT = { bizMorningHours:2, breakfastMins:15, emailMorningMins:30, lunchLearnMins:60, emailAfternoonMins:30, bufferMins:30, lunchLearnGoal:'' };
 
 function loadDayStructure() {
   try {
@@ -3098,6 +3117,20 @@ function buildTodayBlocks() {
     cursor += ds.breakfastMins;
   }
 
+  // 2b. Morning email check (after breakfast — enforces "priorities before email" rule)
+  if (ds.emailMorningMins > 0) {
+    blocks.push({
+      id: 'email-morning', type: 'email',
+      label: 'Email check', icon: '📧',
+      color: 'var(--teal)',
+      startMins: cursor, durationMins: ds.emailMorningMins,
+      tasks: [], calEvents: [],
+      nudge: 'After your first priority is started · inbox sweep only',
+      noteKey: null
+    });
+    cursor += ds.emailMorningMins;
+  }
+
   // 3. Work block
   const workMins = Math.round((day.work || 0) * 60);
   if (workMins > 0) {
@@ -3138,8 +3171,8 @@ function buildTodayBlocks() {
     cursor += ds.lunchLearnMins;
   }
 
-  // 6. Afternoon block (gap before buffer)
-  const afternoonEnd = wrapEndMins - ds.bufferMins;
+  // 6. Afternoon block (gap before Australia email + buffer)
+  const afternoonEnd = wrapEndMins - ds.bufferMins - (ds.emailAfternoonMins > 0 ? ds.emailAfternoonMins : 0);
   const afternoonMins = afternoonEnd - cursor;
   if (afternoonMins > 5) {
     blocks.push({
@@ -3150,6 +3183,20 @@ function buildTodayBlocks() {
       tasks: [], calEvents: [], nudge: '', noteKey: null
     });
     cursor += afternoonMins;
+  }
+
+  // 6b. Australia email check (Afternoon Zone, just before close-down)
+  if (ds.emailAfternoonMins > 0) {
+    blocks.push({
+      id: 'email-afternoon', type: 'email',
+      label: 'Australia email', icon: '📧',
+      color: 'var(--amber)',
+      startMins: cursor, durationMins: ds.emailAfternoonMins,
+      tasks: [], calEvents: [],
+      nudge: 'Australia inbox · respond to urgent items · one sweep only',
+      noteKey: null
+    });
+    cursor += ds.emailAfternoonMins;
   }
 
   // 7. Close-down buffer
@@ -3285,6 +3332,21 @@ function renderUnifiedSchedule() {
         </div>
         ${blk.nudge ? `<div class="uday-nudge" style="color:${blk.color}">${esc(blk.nudge)}</div>` : ''}
         ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" id="lunch-learn-note" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-'+state.dayKey,this.value)">${esc(localStorage.getItem('kat-lunch-'+state.dayKey)||'')}</textarea>` : ''}
+      </div>`;
+      continue;
+    }
+
+    if (blk.type === 'email') {
+      const isRunning = state.timer && state.timer.note === 'Task: '+blk.label;
+      html += `<div class="uday-blk" style="border-left-color:${blk.color}">
+        <div class="uday-blk-hdr">
+          <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
+          <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
+          <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+          <button class="uday-start${isRunning?' running':''}" style="margin-left:auto"
+            onclick="startTaskTimer('Work Work','${blk.label.replace(/'/g,"\\'")}')">▶</button>
+        </div>
+        <div class="uday-nudge" style="color:${blk.color};padding-left:0">${esc(blk.nudge)}</div>
       </div>`;
       continue;
     }
