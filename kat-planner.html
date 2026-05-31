@@ -728,7 +728,18 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <div class="flex gap8" style="flex-wrap:wrap">
             <input class="form-input" id="new-stask-name-kat" placeholder="Task name…" style="flex:1;min-width:140px"/>
             <select class="field-select" id="new-stask-project-kat"><option value="">Project…</option></select>
+            <select class="field-select" id="new-stask-area-kat">
+              <option value="">Area…</option>
+              <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
+              <option>Learning</option><option>Creative</option><option>Rest</option>
+              <option>Relationships</option><option>Admin</option>
+            </select>
+            <select class="field-select" id="new-stask-priority-kat">
+              <option value="">Priority…</option>
+              <option>Q1 Do Now</option><option>Q2 Schedule</option><option>Q3 Delegate</option><option>Q4 Drop</option>
+            </select>
             <input class="field-num" id="new-stask-hrs-kat" type="number" placeholder="Hrs" min=".25" step=".25" style="width:60px"/>
+            <input class="form-input" id="new-stask-due-kat" type="date" style="width:130px" title="Due date (defaults to sprint-end Friday)"/>
             <button class="btn btn-primary btn-sm" onclick="addSprintTask('Kat')">Add</button>
           </div>
         </div>
@@ -2621,8 +2632,8 @@ function renderSprintProjects() {
 }
 
 function renderSprintTasks() {
-  const kat = sprintState.tasks.filter(t=>t.fields.Owner==='Kat');
-  const tim = sprintState.tasks.filter(t=>t.fields.Owner==='Tim');
+  const kat = sprintState.tasks.filter(t=>(t.fields.Owner||[]).includes('Kat'));
+  const tim = sprintState.tasks.filter(t=>(t.fields.Owner||[]).includes('Tim'));
   const katEl = document.getElementById('my-sprint-tasks-body');
   const timEl = document.getElementById('tim-sprint-tasks-body');
   if (katEl) katEl.innerHTML = kat.length ? kat.map(t=>sprintTaskHTML(t,true)).join('') : '<p class="no-tasks text-sm text-gray">No tasks assigned to you this sprint.</p>';
@@ -2635,6 +2646,11 @@ function sprintTaskHTML(t, isKat) {
   const pulled = f['Pulled to Daily']===true;
   const pName = sprintState.projects.find(p=>(f.Project||[]).includes(p.id))?.fields.Name||'';
   const hrs = f['Estimated Hours'];
+  const area = (f.Area||[])[0]||'';
+  const pri = f.Priority||'';
+  const due = f['Due Date']||'';
+  const dueFmt = due ? new Date(due+'T00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+  const priColor = {'Q1 Do Now':'var(--teal)','Q2 Schedule':'var(--purple)','Q3 Delegate':'var(--amber)','Q4 Drop':'var(--gray-mid)'};
   let pullBtn = '';
   if (isKat && !done) {
     pullBtn = pulled
@@ -2647,7 +2663,10 @@ function sprintTaskHTML(t, isKat) {
       <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
       <div class="task-meta">
         ${pName?`<span class="task-pill tp-area">${esc(pName)}</span>`:''}
+        ${area?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">${esc(area)}</span>`:''}
+        ${pri?`<span class="task-pill" style="background:${priColor[pri]||'var(--gray-light)'};color:white;font-size:10px">${esc(pri)}</span>`:''}
         ${hrs?`<span class="task-pill tp-time">${hrs}h</span>`:''}
+        ${dueFmt?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">📅 ${dueFmt}</span>`:''}
         ${f.Status&&f.Status!=='Todo'?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">${f.Status==='Done'?'Done':'Deferred'}</span>`:''}
       </div>
     </div>
@@ -2751,7 +2770,16 @@ function toggleAddProject() {
   const f=document.getElementById('add-project-form'); f.style.display=f.style.display==='none'?'block':'none';
 }
 function toggleAddSprintTask(who) {
-  const f=document.getElementById('add-sprint-task-'+who); f.style.display=f.style.display==='none'?'block':'none';
+  const f=document.getElementById('add-sprint-task-'+who);
+  const opening = f.style.display==='none';
+  f.style.display=opening?'block':'none';
+  if (opening && who==='kat') {
+    const dueEl = document.getElementById('new-stask-due-kat');
+    if (dueEl && !dueEl.value) {
+      const end = sprintEndDate();
+      if (end) dueEl.value = end.toISOString().slice(0,10);
+    }
+  }
 }
 
 async function addGoal() {
@@ -2792,15 +2820,33 @@ async function addSprintTask(owner) {
   if (!name) return;
   const projectId = document.getElementById(`new-stask-project-${s}`).value;
   const hrs = parseFloat(document.getElementById(`new-stask-hrs-${s}`).value)||null;
-  const fields = {Name: name, Owner: owner, Sprint: sprintState.num, Status: 'Todo'};
+  const fields = {Name: name, Owner: [owner], Sprint: sprintState.num, Status: 'Todo'};
   if (projectId) fields.Project = [projectId];
   if (hrs) fields['Estimated Hours'] = hrs;
+  if (s === 'kat') {
+    const area = document.getElementById('new-stask-area-kat').value;
+    const pri  = document.getElementById('new-stask-priority-kat').value;
+    const due  = document.getElementById('new-stask-due-kat').value;
+    if (area) fields.Area = [area];
+    if (pri)  fields.Priority = pri;
+    if (due) {
+      fields['Due Date'] = due;
+    } else {
+      const end = sprintEndDate();
+      if (end) fields['Due Date'] = end.toISOString().slice(0,10);
+    }
+  }
   try {
     const r = await AT.createSprintTask(fields);
     sprintState.tasks.push(r.records[0]);
     document.getElementById(`new-stask-name-${s}`).value='';
     document.getElementById(`new-stask-project-${s}`).value='';
     document.getElementById(`new-stask-hrs-${s}`).value='';
+    if (s === 'kat') {
+      document.getElementById('new-stask-area-kat').value='';
+      document.getElementById('new-stask-priority-kat').value='';
+      document.getElementById('new-stask-due-kat').value='';
+    }
     document.getElementById(`add-sprint-task-${s}`).style.display='none';
     renderSprintTasks(); toast('Task added');
   } catch(e) { toast('Error: '+e.message); }
