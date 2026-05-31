@@ -1538,12 +1538,13 @@ function renderDayPlan() {
   if (!preview) {
     renderUnifiedSchedule();
   } else {
-    // Future day: schedule timeline into the same body
-    const schedKey = previewSchedKey();
+    // Future day: same unified block structure, for the preview date
+    renderUnifiedSchedule(previewDate());
+    // Prepend the level line above the schedule
     const level = previewDefaultLevel();
     const lc = LEVEL_CONFIG[level];
     const levelLine = `<div class="text-sm text-gray" style="margin-bottom:8px"><strong style="color:var(--black)">${lc.label}</strong> · default for ${esc(previewDayLabel())}</div>`;
-    bodyEl.innerHTML = levelLine + renderScheduleTimeline(schedKey, previewDate());
+    bodyEl.innerHTML = levelLine + bodyEl.innerHTML;
   }
 }
 
@@ -2157,14 +2158,46 @@ async function loadTasks() {
   } catch(e) { toast('Could not load tasks: '+e.message); }
 }
 
-function getTodayTasks() {
+function getTasksForDate(dateStr, isToday) {
   return state.tasks.filter(t => {
     if (t.fields.Status==='Done'||t.fields.Status==='Deferred') return false;
     if (t._isSprint) return true;   // always surface current-sprint commitments
     const td = t.fields['Target Date'];
-    if (td) return td===state.dayKey || td<state.dayKey;   // due today or overdue
-    return t.fields['Date Added']===state.dayKey;          // undated, but added today
+    if (td) return td <= dateStr;   // due on or before that day (overdue rolls forward)
+    return isToday && t.fields['Date Added']===state.dayKey; // undated tasks only show today
   });
+}
+function getTodayTasks() { return getTasksForDate(state.dayKey, true); }
+
+// Parse a standing/custom meeting time string like "3:00–4:00 PM", "~4:30 PM",
+// "9:00–10:00 AM", "2pm" → { startMins, durMins } in minutes-from-midnight, or null.
+function parseMeetingTimeStr(str) {
+  if (!str) return null;
+  const s = String(str).replace(/[~+]/g,' ').trim();
+  const meridMatch = s.match(/(AM|PM)/i);
+  const merid = meridMatch ? meridMatch[1].toUpperCase() : null;
+  const times = [...s.matchAll(/(\d{1,2}):(\d{2})/g)];
+  const applyMerid = (h) => {
+    if (!merid) return h;
+    if (merid==='PM' && h<12) return h+12;
+    if (merid==='AM' && h===12) return 0;
+    return h;
+  };
+  if (!times.length) {
+    const m2 = s.match(/(\d{1,2})\s*(AM|PM)/i);
+    if (m2) { let h=applyMerid(parseInt(m2[1])); return { startMins:h*60, durMins:60 }; }
+    return null;
+  }
+  let sh = applyMerid(parseInt(times[0][1])), sm = parseInt(times[0][2]);
+  let startMins = sh*60 + sm;
+  let durMins = 60;
+  if (times.length > 1) {
+    let eh = applyMerid(parseInt(times[1][1])), em = parseInt(times[1][2]);
+    let endMins = eh*60 + em;
+    if (endMins <= startMins) endMins += 12*60; // crossed meridian boundary
+    durMins = Math.max(15, endMins - startMins);
+  }
+  return { startMins, durMins };
 }
 
 function renderTodayTasks() {
@@ -3083,13 +3116,15 @@ function saveDayStructure(obj) {
 }
 
 // ─── Unified Day Schedule ──────────────────────────────────────
-function buildTodayBlocks() {
+function buildTodayBlocks(targetDate) {
   const ds = loadDayStructure();
-  const schedKey = todaySchedKey();
+  const date = targetDate || new Date(state.dayKey + 'T00:00');
+  const dateStr = localDateStr(date);
+  const isToday = dateStr === state.dayKey;
+  const schedKey = DOW_KEYS[date.getDay()];
   const day = SCHEDULE.days[schedKey];
   if (!day) return [];
 
-  const dateStr = state.dayKey;
   let cursor = timeToMins(day.start || '06:30');
   const wrapEndMins = timeToMins(day.wrapEnd || '17:30');
   const blocks = [];
@@ -3231,7 +3266,7 @@ function buildTodayBlocks() {
   });
 
   // Assign tasks to blocks
-  const todayTasks = getTodayTasks();
+  const todayTasks = getTasksForDate(dateStr, isToday);
   const assignedTaskIds = new Set();
 
   function assignTasksToBlock(blk, areas) {
@@ -3255,39 +3290,78 @@ function buildTodayBlocks() {
     else if (blk.id === 'afternoon') assignTasksToBlock(blk, ['Admin']);
   }
 
-  // Assign calendar events to blocks
-  const calEvs = getVisibleEventsForDate(dateStr);
-  const KIND_ICON  = { appointment:'📅', travel:'✈️', meeting:'👥' };
-  const KIND_COLOR = { appointment:'var(--amber)', travel:'#3B82F6', meeting:'#6366f1' };
+  // ── Gather all meetings for this date: calendar (iCal) + standing + custom ──
+  const KIND_ICON  = { appointment:'📅', travel:'✈️', meeting:'👥', standing:'👥', custom:'📌' };
+  const KIND_COLOR = { appointment:'var(--amber)', travel:'#3B82F6', meeting:'#6366f1', standing:'#7C5CFC', custom:'#6366f1' };
+  const meetingObjs = [];
 
+  // 1. Calendar (iCal) events
+  const calEvs = getVisibleEventsForDate(dateStr);
   calEvs.filter(e => !e.allDay).forEach(ev => {
     const d = ev.start instanceof Date ? ev.start : new Date(ev.start);
     const evMins = d.getHours() * 60 + d.getMinutes();
     const ed = ev.end instanceof Date ? ev.end : (ev.end ? new Date(ev.end) : null);
     const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
-    const calObj = {
-      startMins: evMins, durationMins: dur,
-      title: ev.title || 'Event',
-      icon: KIND_ICON[ev.kind] || '📅',
-      color: KIND_COLOR[ev.kind] || '#6366f1',
-      kind: ev.kind
-    };
-    // Find the work-block that contains this event
+    meetingObjs.push({
+      startMins: evMins, durationMins: dur, title: ev.title || 'Event',
+      icon: KIND_ICON[ev.kind] || '📅', color: KIND_COLOR[ev.kind] || '#6366f1', kind: ev.kind
+    });
+  });
+
+  // 2. Standing meetings for this weekday. Skip a standing entry only if the
+  // calendar already holds the SAME meeting (similar title near the same time),
+  // so genuinely different meetings at the same hour both still show.
+  const sigWords = s => (s||'').toLowerCase().match(/[a-z]{4,}/g) || [];
+  const dayName = DAYS[date.getDay()];
+  (STANDING[dayName] || []).forEach(m => {
+    const p = parseMeetingTimeStr(m.time);
+    if (!p) return;
+    const myWords = sigWords(m.name);
+    const dup = meetingObjs.some(mo => {
+      if (Math.abs(mo.startMins - p.startMins) > 30) return false;
+      const moWords = sigWords(mo.title);
+      return myWords.some(w => moWords.includes(w)); // shares a significant word
+    });
+    if (dup) return;
+    meetingObjs.push({
+      startMins: p.startMins, durationMins: p.durMins, title: m.name,
+      icon: '👥', color: KIND_COLOR.standing, kind: 'standing'
+    });
+  });
+
+  // 3. Custom meetings (today only)
+  if (isToday) {
+    (state.customMeetings || []).forEach(m => {
+      const p = parseMeetingTimeStr(m.time);
+      if (!p) return;
+      meetingObjs.push({
+        startMins: p.startMins, durationMins: p.durMins, title: m.name,
+        icon: '📌', color: KIND_COLOR.custom, kind: 'custom'
+      });
+    });
+  }
+
+  // Assign each meeting to the block whose time window contains its start
+  meetingObjs.forEach(calObj => {
     let assigned = false;
     for (const blk of blocks) {
-      if (blk.type !== 'work-block' && blk.type !== 'meal') continue;
-      if (evMins >= blk.startMins && evMins < blk.startMins + blk.durationMins) {
+      if (blk.type === 'wrap') continue;
+      if (calObj.startMins >= blk.startMins && calObj.startMins < blk.startMins + blk.durationMins) {
         blk.calEvents.push(calObj);
         assigned = true;
         break;
       }
     }
     if (!assigned) {
-      // Standalone — attach to nearest work block before it
-      const before = blocks.filter(b => b.type === 'work-block' && b.startMins <= evMins);
-      if (before.length) before[before.length-1].calEvents.push(calObj);
+      // Outside all blocks — attach to nearest block before it (or first block)
+      const before = blocks.filter(b => b.type !== 'wrap' && b.startMins <= calObj.startMins);
+      const target = before.length ? before[before.length-1] : blocks.find(b => b.type !== 'wrap');
+      if (target) target.calEvents.push(calObj);
     }
   });
+
+  // Sort each block's events by start time
+  blocks.forEach(b => b.calEvents && b.calEvents.sort((x,y) => x.startMins - y.startMins));
 
   // Store all-day events separately
   blocks._allDay = calEvs.filter(e => e.allDay);
@@ -3295,16 +3369,35 @@ function buildTodayBlocks() {
   return blocks;
 }
 
-function renderUnifiedSchedule() {
+function renderUnifiedSchedule(targetDate) {
   const el = document.getElementById('unified-schedule-body');
   if (!el) return;
 
-  const blocks = buildTodayBlocks();
+  // If we're currently viewing a look-forward preview and this was a no-arg
+  // (background) re-render, route through renderDayPlan so the preview is kept.
+  if (!targetDate && typeof previewOffset !== 'undefined' && previewOffset > 0) {
+    renderDayPlan();
+    return;
+  }
+
+  const date = targetDate || new Date(state.dayKey + 'T00:00');
+  const dateStr = localDateStr(date);
+  const isToday = dateStr === state.dayKey;
+  const blocks = buildTodayBlocks(date);
   const fh = m => m >= 60 ? `${(m/60).toFixed(m%60===0?0:1)}h` : `${m}m`;
+
+  // Events sub-list (shared by all block types)
+  const calHtmlFor = (blk) => (blk.calEvents || []).map(ce =>
+    `<div class="uday-cal" style="border-left-color:${ce.color}">
+      <span class="uday-blk-time">${minsToTime(ce.startMins)}</span>
+      <span style="color:${ce.color}">${ce.icon} ${esc(ce.title)}${ce.kind==='standing'?' <span style="font-size:9px;opacity:.7">standing</span>':''}</span>
+      <span class="uday-blk-dur">${fh(ce.durationMins)}</span>
+    </div>`).join('');
+
   let html = '';
 
-  // Rescheduled note
-  if (state.rescheduledFrom) {
+  // Rescheduled note (today only)
+  if (isToday && state.rescheduledFrom) {
     const rf = state.rescheduledFrom;
     const rts = `${rf.getHours()%12||12}:${String(rf.getMinutes()).padStart(2,'0')} ${rf.getHours()>=12?'pm':'am'}`;
     html += `<div class="uday-resched">↻ Rescheduled from ${rts} — showing remaining tasks</div>`;
@@ -3332,6 +3425,7 @@ function renderUnifiedSchedule() {
         'var(--coral)': 'rgba(216,90,48,.07)'
       };
       const bg = bgMap[blk.color] || 'rgba(0,0,0,.04)';
+      const noteVal = esc(localStorage.getItem('kat-lunch-'+dateStr) || '');
       html += `<div class="uday-meal" style="background:${bg};border-left:3px solid ${blk.color}">
         <div class="uday-meal-hdr">
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
@@ -3339,22 +3433,26 @@ function renderUnifiedSchedule() {
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
         </div>
         ${blk.nudge ? `<div class="uday-nudge" style="color:${blk.color}">${esc(blk.nudge)}</div>` : ''}
-        ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" id="lunch-learn-note" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-'+state.dayKey,this.value)">${esc(localStorage.getItem('kat-lunch-'+state.dayKey)||'')}</textarea>` : ''}
+        ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-${dateStr}',this.value)">${noteVal}</textarea>` : ''}
+        ${calHtmlFor(blk)}
       </div>`;
       continue;
     }
 
     if (blk.type === 'email') {
-      const isRunning = state.timer && state.timer.note === 'Task: '+blk.label;
+      const isRunning = isToday && state.timer && state.timer.note === 'Task: '+blk.label;
+      const startBtn = isToday
+        ? `<button class="uday-start${isRunning?' running':''}" style="margin-left:auto" onclick="startTaskTimer('Work Work','${blk.label.replace(/'/g,"\\'")}')">▶</button>`
+        : '';
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
         <div class="uday-blk-hdr">
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
-          <button class="uday-start${isRunning?' running':''}" style="margin-left:auto"
-            onclick="startTaskTimer('Work Work','${blk.label.replace(/'/g,"\\'")}')">▶</button>
+          ${startBtn}
         </div>
         <div class="uday-nudge" style="color:${blk.color};padding-left:0">${esc(blk.nudge)}</div>
+        ${calHtmlFor(blk)}
       </div>`;
       continue;
     }
@@ -3367,18 +3465,17 @@ function renderUnifiedSchedule() {
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
         </div>
         <div class="uday-nudge" style="color:var(--coral)">${esc(blk.nudge)}</div>
+        ${calHtmlFor(blk)}
       </div>`;
       continue;
     }
 
     if (blk.type === 'work-block') {
-      // Skip rescheduled blocks that end before current time
-      let skipBlock = false;
-      if (state.rescheduledFrom) {
+      // Skip rescheduled blocks that end before current time (today only)
+      if (isToday && state.rescheduledFrom) {
         const nowMins = state.rescheduledFrom.getHours()*60 + state.rescheduledFrom.getMinutes();
-        if (blk.startMins + blk.durationMins <= nowMins) skipBlock = true;
+        if (blk.startMins + blk.durationMins <= nowMins && !blk.tasks.length && !blk.calEvents.length) continue;
       }
-      if (skipBlock && !blk.tasks.length && !blk.calEvents.length) continue;
 
       let tasksHtml = '';
       for (const t of blk.tasks) {
@@ -3387,7 +3484,7 @@ function renderUnifiedSchedule() {
         const q = f.Priority || '';
         const isQ1 = q === 'Q1 Do Now';
         const taskArea = Array.isArray(f.Area) ? f.Area[0] : (f.Area || '');
-        const isRunning = state.timer && state.timer.area === taskArea && state.timer.label === (f.Name||'');
+        const isRunning = isToday && state.timer && state.timer.area === taskArea && state.timer.label === (f.Name||'');
         const mins = f['Estimated Minutes'];
         let minsStr = '';
         if (mins) minsStr = mins >= 60 ? `${Math.floor(mins/60)}h${mins%60?mins%60+'m':''}` : `${mins}m`;
@@ -3408,16 +3505,7 @@ function renderUnifiedSchedule() {
         tasksHtml += `<button class="uday-more">+ ${blk._extraTasks} more</button>`;
       }
       if (!blk.tasks.length) {
-        tasksHtml = `<div class="text-sm text-gray" style="padding:3px 6px;font-style:italic">No tasks queued</div>`;
-      }
-
-      let calHtml = '';
-      for (const ce of blk.calEvents) {
-        calHtml += `<div class="uday-cal" style="border-left-color:${ce.color}">
-          <span class="uday-blk-time">${minsToTime(ce.startMins)}</span>
-          <span style="color:${ce.color}">${ce.icon} ${esc(ce.title)}</span>
-          <span class="uday-blk-dur">${fh(ce.durationMins)}</span>
-        </div>`;
+        tasksHtml = `<div class="text-sm text-gray" style="padding:3px 6px;font-style:italic">No tasks queued for this block</div>`;
       }
 
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
@@ -3427,12 +3515,12 @@ function renderUnifiedSchedule() {
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
         </div>
         ${tasksHtml}
-        ${calHtml}
+        ${calHtmlFor(blk)}
       </div>`;
     }
   }
 
-  if (!html) html = '<p class="text-sm text-gray">No schedule template for today.</p>';
+  if (!html) html = '<p class="text-sm text-gray">No schedule template for this day.</p>';
   el.innerHTML = html;
 }
 
