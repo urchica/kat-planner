@@ -1000,23 +1000,35 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
     <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Day structure</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
       <div>
-        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Business block (hours)</label>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">🐕 Business deep work (hours)</label>
         <input type="number" id="ds-biz-morning" class="form-input" min="0" step="0.5" style="width:100%"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">⚡ Work deep work (hours)</label>
+        <input type="number" id="ds-work-deep" class="form-input" min="0" step="0.5" style="width:100%"/>
       </div>
       <div>
         <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Breakfast (mins)</label>
         <input type="number" id="ds-breakfast" class="form-input" min="5" step="5" style="width:100%"/>
       </div>
       <div>
-        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Lunch &amp; Learn (mins)</label>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">📧 Morning email min (mins)</label>
+        <input type="number" id="ds-email-morning-min" class="form-input" min="0" step="5" style="width:100%"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">🏃 Exercise earliest start</label>
+        <input type="time" id="ds-exercise-earliest" class="form-input" style="width:100%"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">🍽️ Lunch &amp; Learn (mins)</label>
         <input type="number" id="ds-lunch-learn" class="form-input" min="15" step="15" style="width:100%"/>
       </div>
       <div>
-        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Close-down buffer (mins)</label>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">💭 Close-down buffer (mins)</label>
         <input type="number" id="ds-buffer" class="form-input" min="0" step="5" style="width:100%"/>
       </div>
     </div>
-    <div style="font-size:11px;color:var(--gray);margin-bottom:14px">📧 Email time is set per day in the table above (split 2:1 morning : afternoon). Monday defaults to 90 min.</div>
+    <div style="font-size:11px;color:var(--gray);margin-bottom:14px">📧 Total email time is set per day in the table above (Mon 90m). Morning gets the minimum above; the rest becomes the afternoon Australia email check. Business + Work deep-work blocks run before the midday exercise + lunch; lighter work + meetings fill the afternoon.</div>
     <div style="margin-bottom:18px">
       <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Lunch &amp; Learn goal / focus (shows in the block)</label>
       <input type="text" id="ds-ll-goal" class="form-input" style="width:100%" placeholder="e.g. Reading: The Brain That Changes Itself"/>
@@ -2477,11 +2489,14 @@ function openSettings() {
 
   // Populate day structure fields
   const ds = loadDayStructure();
-  const dsBiz  = document.getElementById('ds-biz-morning');    if (dsBiz)  dsBiz.value  = ds.bizMorningHours;
-  const dsBfst = document.getElementById('ds-breakfast');       if (dsBfst) dsBfst.value = ds.breakfastMins;
-  const dsLL   = document.getElementById('ds-lunch-learn');     if (dsLL)   dsLL.value   = ds.lunchLearnMins;
-  const dsBuf  = document.getElementById('ds-buffer');          if (dsBuf)  dsBuf.value  = ds.bufferMins;
-  const dsGoal = document.getElementById('ds-ll-goal');         if (dsGoal) dsGoal.value = ds.lunchLearnGoal || '';
+  const dsBiz  = document.getElementById('ds-biz-morning');       if (dsBiz)  dsBiz.value  = ds.bizMorningHours;
+  const dsWD   = document.getElementById('ds-work-deep');         if (dsWD)   dsWD.value   = ds.workDeepHours;
+  const dsBfst = document.getElementById('ds-breakfast');          if (dsBfst) dsBfst.value = ds.breakfastMins;
+  const dsEMin = document.getElementById('ds-email-morning-min');  if (dsEMin) dsEMin.value = ds.emailMorningMin;
+  const dsEarl = document.getElementById('ds-exercise-earliest');  if (dsEarl) dsEarl.value = ds.exerciseEarliest;
+  const dsLL   = document.getElementById('ds-lunch-learn');        if (dsLL)   dsLL.value   = ds.lunchLearnMins;
+  const dsBuf  = document.getElementById('ds-buffer');             if (dsBuf)  dsBuf.value  = ds.bufferMins;
+  const dsGoal = document.getElementById('ds-ll-goal');            if (dsGoal) dsGoal.value = ds.lunchLearnGoal || '';
 
   document.getElementById('settings-modal').style.display='flex';
 }
@@ -2503,12 +2518,16 @@ function saveSettings() {
   saveSchedule();
   // Save day structure
   const newDs = {
-    bizMorningHours:    parseFloat(document.getElementById('ds-biz-morning')?.value)    || DEFAULT_DAY_STRUCT.bizMorningHours,
-    breakfastMins:      parseInt(document.getElementById('ds-breakfast')?.value)        || DEFAULT_DAY_STRUCT.breakfastMins,
-    lunchLearnMins:     parseInt(document.getElementById('ds-lunch-learn')?.value)      || DEFAULT_DAY_STRUCT.lunchLearnMins,
-    bufferMins:         parseInt(document.getElementById('ds-buffer')?.value)           || DEFAULT_DAY_STRUCT.bufferMins,
+    bizMorningHours:  parseFloat(document.getElementById('ds-biz-morning')?.value)  || DEFAULT_DAY_STRUCT.bizMorningHours,
+    workDeepHours:    parseFloat(document.getElementById('ds-work-deep')?.value)     || DEFAULT_DAY_STRUCT.workDeepHours,
+    breakfastMins:    parseInt(document.getElementById('ds-breakfast')?.value)       || DEFAULT_DAY_STRUCT.breakfastMins,
+    emailMorningMin:  parseInt(document.getElementById('ds-email-morning-min')?.value),
+    exerciseEarliest: document.getElementById('ds-exercise-earliest')?.value         || DEFAULT_DAY_STRUCT.exerciseEarliest,
+    lunchLearnMins:   parseInt(document.getElementById('ds-lunch-learn')?.value)     || DEFAULT_DAY_STRUCT.lunchLearnMins,
+    bufferMins:       parseInt(document.getElementById('ds-buffer')?.value)          || DEFAULT_DAY_STRUCT.bufferMins,
     lunchLearnGoal:  (document.getElementById('ds-ll-goal')?.value || '').trim()
   };
+  if (isNaN(newDs.emailMorningMin)) newDs.emailMorningMin = DEFAULT_DAY_STRUCT.emailMorningMin;
   saveDayStructure(newDs);
   // Save calendar URLs and refresh events if changed
   const oldCalCfg = loadCalUrls();
@@ -3101,7 +3120,7 @@ function renderScheduleTimeline(schedKey, date) {
 }
 
 // ─── Day Structure ─────────────────────────────────────────────
-const DEFAULT_DAY_STRUCT = { bizMorningHours:2, breakfastMins:15, emailMorningMins:30, lunchLearnMins:60, emailAfternoonMins:30, bufferMins:30, lunchLearnGoal:'' };
+const DEFAULT_DAY_STRUCT = { bizMorningHours:2, workDeepHours:2, breakfastMins:15, emailMorningMin:30, exerciseEarliest:'11:00', lunchLearnMins:60, bufferMins:30, lunchLearnGoal:'' };
 
 function loadDayStructure() {
   try {
@@ -3129,139 +3148,133 @@ function buildTodayBlocks(targetDate) {
   const wrapEndMins = timeToMins(day.wrapEnd || '17:30');
   const blocks = [];
 
-  // 1. Business (biz-morning)
+  // ── Zone-anchored day structure ──────────────────────────────────
+  // Morning Zone: Business deep work → breakfast → 30m email → Work deep work
+  // Midday Zone (anchored ≥ exerciseEarliest): Exercise → Lunch & Learn
+  // Afternoon Zone: lighter work + meetings → Australia email → Close-down
+  const totalEmailMins   = day.emailMins ?? 60;
+  const emailMorningMins  = Math.min(ds.emailMorningMin || 30, totalEmailMins); // ≥30m before deep work
+  const emailAfternoonMins = Math.max(0, totalEmailMins - emailMorningMins);
+  const exerciseFloor = timeToMins(ds.exerciseEarliest || '11:00');
+  const deepWorkMins  = Math.round((ds.workDeepHours || 2) * 60);
+
+  // 1. Business deep work (first thing)
   const bizMins = Math.round(ds.bizMorningHours * 60);
   if (bizMins > 0) {
     blocks.push({
       id: 'biz-morning', type: 'work-block',
-      label: 'Business block', icon: '🐕',
-      color: 'var(--teal-dark)',
+      label: 'Business — deep work', icon: '🐕', color: 'var(--teal-dark)',
       startMins: cursor, durationMins: bizMins,
-      tasks: [], calEvents: [], nudge: '', noteKey: null
+      tasks: [], calEvents: [], nudge: 'Top business priority first', noteKey: null
     });
     cursor += bizMins;
   }
 
-  // 2. Breakfast
+  // 2. Breakfast (short screen-break)
   if (ds.breakfastMins > 0) {
     blocks.push({
       id: 'breakfast', type: 'meal',
-      label: 'Breakfast', icon: '🍳',
-      color: '#F59E0B',
+      label: 'Breakfast', icon: '🍳', color: '#F59E0B',
       startMins: cursor, durationMins: ds.breakfastMins,
       tasks: [], calEvents: [], nudge: '🚫 Away from screen', noteKey: null
     });
     cursor += ds.breakfastMins;
   }
 
-  // 2b. Morning email check (after breakfast — enforces "priorities before email" rule)
-  // Use per-day emailMins if set (day.emailMins), otherwise fall back to global defaults.
-  // Split 2:1 morning : afternoon (e.g. 90m → 60m + 30m, 60m → 40m + 20m).
-  const totalEmailMins = day.emailMins ?? (ds.emailMorningMins + ds.emailAfternoonMins);
-  const emailMorningMins   = totalEmailMins > 0 ? Math.round(totalEmailMins * 2 / 3) : 0;
-  const emailAfternoonMins = totalEmailMins - emailMorningMins;
-
+  // 3. Morning email check (≥30m, before the work deep-work block)
   if (emailMorningMins > 0) {
     blocks.push({
       id: 'email-morning', type: 'email',
-      label: 'Email check', icon: '📧',
-      color: 'var(--teal)',
+      label: 'Email check', icon: '📧', color: 'var(--teal)',
       startMins: cursor, durationMins: emailMorningMins,
       tasks: [], calEvents: [],
-      nudge: 'After your first priority is started · inbox sweep only',
-      noteKey: null
+      nudge: 'Quick inbox sweep — then into deep work', noteKey: null
     });
     cursor += emailMorningMins;
   }
 
-  // 3. Work block
-  const workMins = Math.round((day.work || 0) * 60);
-  if (workMins > 0) {
+  // 4. Work deep work (target ~2h; extend to reach the exercise anchor if morning runs ahead)
+  if (day.work > 0) {
+    const workDeepDur = Math.max(deepWorkMins, exerciseFloor - cursor);
     blocks.push({
-      id: 'work-main', type: 'work-block',
-      label: 'Work block', icon: '⚡',
-      color: 'var(--teal)',
-      startMins: cursor, durationMins: workMins,
-      tasks: [], calEvents: [], nudge: '', noteKey: null
+      id: 'work-deep', type: 'work-block',
+      label: 'Work — deep work', icon: '⚡', color: 'var(--teal)',
+      startMins: cursor, durationMins: workDeepDur,
+      tasks: [], calEvents: [], nudge: 'Deep / Q1 work — protect this block', noteKey: null
     });
-    cursor += workMins;
+    cursor += workDeepDur;
   }
 
-  // 4. Exercise
+  // 5. Exercise — midday anchor (starts no earlier than exerciseEarliest, ~11am)
   const exerciseMins = Math.round((day.exercise || 0) * 60);
   if (exerciseMins > 0) {
+    if (cursor < exerciseFloor) cursor = exerciseFloor;
     blocks.push({
       id: 'exercise', type: 'work-block',
-      label: 'Exercise', icon: '🏃',
-      color: 'var(--purple)',
+      label: 'Exercise', icon: '🏃', color: 'var(--purple)',
       startMins: cursor, durationMins: exerciseMins,
-      tasks: [], calEvents: [], nudge: '', noteKey: null
+      tasks: [], calEvents: [], nudge: 'Move your body — protected midday time', noteKey: null
     });
     cursor += exerciseMins;
   }
 
-  // 5. Lunch & Learn
+  // 6. Lunch & Learn (after exercise)
   if (ds.lunchLearnMins > 0) {
     blocks.push({
       id: 'lunch-learn', type: 'meal',
-      label: 'Lunch & Learn', icon: '🍽️',
-      color: 'var(--purple)',
+      label: 'Lunch & Learn', icon: '🍽️', color: 'var(--purple)',
       startMins: cursor, durationMins: ds.lunchLearnMins,
       tasks: [], calEvents: [],
-      nudge: ds.lunchLearnGoal || '🎓 Learning time',
+      nudge: ds.lunchLearnGoal || '🎓 Eat away from desk · learn something',
       noteKey: 'lunch-learn'
     });
     cursor += ds.lunchLearnMins;
   }
 
-  // 6. Afternoon block (gap before Australia email + buffer)
-  const afternoonEnd = wrapEndMins - ds.bufferMins - (emailAfternoonMins > 0 ? emailAfternoonMins : 0);
+  // 7. Afternoon — lighter work + meetings (fills until Australia email + close-down)
+  const afternoonEnd = wrapEndMins - ds.bufferMins - emailAfternoonMins;
   const afternoonMins = afternoonEnd - cursor;
   if (afternoonMins > 5) {
     blocks.push({
       id: 'afternoon', type: 'work-block',
-      label: 'Afternoon', icon: '📋',
-      color: 'var(--amber)',
+      label: 'Afternoon — lighter work', icon: '📋', color: 'var(--amber)',
       startMins: cursor, durationMins: afternoonMins,
-      tasks: [], calEvents: [], nudge: '', noteKey: null
+      tasks: [], calEvents: [], nudge: 'Lighter work · meetings · admin', noteKey: null
     });
-    cursor += afternoonMins;
+    cursor = afternoonEnd;
+  } else {
+    cursor = Math.max(cursor, afternoonEnd);
   }
 
-  // 6b. Australia email check (Afternoon Zone, just before close-down)
+  // 8. Australia email (afternoon zone, before close-down)
   if (emailAfternoonMins > 0) {
     blocks.push({
       id: 'email-afternoon', type: 'email',
-      label: 'Australia email', icon: '📧',
-      color: 'var(--amber)',
+      label: 'Australia email', icon: '📧', color: 'var(--amber)',
       startMins: cursor, durationMins: emailAfternoonMins,
       tasks: [], calEvents: [],
-      nudge: 'Australia inbox · respond to urgent items · one sweep only',
-      noteKey: null
+      nudge: 'Australia inbox · urgent items only', noteKey: null
     });
     cursor += emailAfternoonMins;
   }
 
-  // 7. Close-down buffer
+  // 9. Close-down buffer
   if (ds.bufferMins > 0) {
     blocks.push({
       id: 'closedown', type: 'buffer',
-      label: 'Close-down', icon: '💭',
-      color: 'var(--coral)',
+      label: 'Close-down', icon: '💭', color: 'var(--coral)',
       startMins: cursor, durationMins: ds.bufferMins,
       tasks: [], calEvents: [],
-      nudge: 'Wrap up · Check tomorrow · Set intentions',
-      noteKey: null
+      nudge: 'Wrap up · plan tomorrow · close down fully', noteKey: null
     });
     cursor += ds.bufferMins;
   }
 
-  // 8. Wrap marker
+  // 10. Wrap marker (anchored to the day's wrap time, or later if the day overflowed)
   blocks.push({
     id: 'wrap', type: 'wrap',
-    label: 'Wrap', icon: '🏁',
-    color: 'var(--gray)',
-    startMins: wrapEndMins, durationMins: 0,
+    label: 'Wrap', icon: '🏁', color: 'var(--gray)',
+    startMins: Math.max(wrapEndMins, cursor), durationMins: 0,
     tasks: [], calEvents: [], nudge: '', noteKey: null
   });
 
@@ -3285,9 +3298,9 @@ function buildTodayBlocks(targetDate) {
   for (const blk of blocks) {
     if (blk.type !== 'work-block') continue;
     if (blk.id === 'biz-morning') assignTasksToBlock(blk, ['Business']);
-    else if (blk.id === 'work-main') assignTasksToBlock(blk, ['Work Work', '__unassigned__']);
+    else if (blk.id === 'work-deep') assignTasksToBlock(blk, ['Work Work', '__unassigned__']); // deep/Q1 work first
     else if (blk.id === 'exercise') assignTasksToBlock(blk, ['Health & Fitness']);
-    else if (blk.id === 'afternoon') assignTasksToBlock(blk, ['Admin']);
+    else if (blk.id === 'afternoon') assignTasksToBlock(blk, ['Work Work', '__unassigned__', 'Admin']); // leftover work + admin
   }
 
   // ── Gather all meetings for this date: calendar (iCal) + standing + custom ──
