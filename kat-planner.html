@@ -949,6 +949,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <th style="padding:4px 6px">Work</th>
             <th style="padding:4px 6px">Biz</th>
             <th style="padding:4px 6px">Exer</th>
+            <th style="padding:4px 6px">📧 min</th>
             <th style="padding:4px 6px">Wrap by</th>
             <th style="padding:4px 6px">Lvl</th>
           </tr>
@@ -1007,22 +1008,15 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         <input type="number" id="ds-breakfast" class="form-input" min="5" step="5" style="width:100%"/>
       </div>
       <div>
-        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">📧 Morning email check (mins)</label>
-        <input type="number" id="ds-email-morning" class="form-input" min="0" step="5" style="width:100%"/>
-      </div>
-      <div>
         <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Lunch &amp; Learn (mins)</label>
         <input type="number" id="ds-lunch-learn" class="form-input" min="15" step="15" style="width:100%"/>
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">📧 Australia email (mins)</label>
-        <input type="number" id="ds-email-afternoon" class="form-input" min="0" step="5" style="width:100%"/>
       </div>
       <div>
         <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Close-down buffer (mins)</label>
         <input type="number" id="ds-buffer" class="form-input" min="0" step="5" style="width:100%"/>
       </div>
     </div>
+    <div style="font-size:11px;color:var(--gray);margin-bottom:14px">📧 Email time is set per day in the table above (split 2:1 morning : afternoon). Monday defaults to 90 min.</div>
     <div style="margin-bottom:18px">
       <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Lunch &amp; Learn goal / focus (shows in the block)</label>
       <input type="text" id="ds-ll-goal" class="form-input" style="width:100%" placeholder="e.g. Reading: The Brain That Changes Itself"/>
@@ -1171,11 +1165,11 @@ function recomputeSprint() {
 const DEFAULT_SCHEDULE = {
   // Per weekday. Hours include emails + meetings + ½h buffer for "work".
   days: {
-    mon: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1},
-    tue: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:1, defaultLevel:1},
-    wed: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:2, defaultLevel:1},
-    thu: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1},
-    fri: {start:'07:30', workEnd:'13:00', wrapEnd:'13:30', work:3, business:2, exercise:1, defaultLevel:1}
+    mon: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1, emailMins:90},
+    tue: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:1, defaultLevel:1, emailMins:60},
+    wed: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:2, defaultLevel:1, emailMins:60},
+    thu: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1, emailMins:60},
+    fri: {start:'07:30', workEnd:'13:00', wrapEnd:'13:30', work:3, business:2, exercise:1, defaultLevel:1, emailMins:30}
   },
   // Weekly targets (hours). Editable in weekly review.
   weeklyTargets: {work:25, business:10, exercise:8, admin:1, learning:4, creative:2.5},
@@ -1196,9 +1190,18 @@ function loadSchedule() {
   try {
     const saved = JSON.parse(localStorage.getItem('kat-schedule')||'null');
     if (!saved) return JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
-    // Deep-merge so new default keys appear even on old saved configs
+    // Deep-merge PER DAY so new default keys (e.g. emailMins) appear even on
+    // old saved configs that predate them.
+    const mergedDays = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE.days));
+    Object.keys(mergedDays).forEach(d => {
+      mergedDays[d] = {...mergedDays[d], ...((saved.days||{})[d]||{})};
+    });
+    // Any saved day keys not in defaults (shouldn't happen, but be safe)
+    Object.keys(saved.days||{}).forEach(d => {
+      if (!mergedDays[d]) mergedDays[d] = saved.days[d];
+    });
     return {
-      days: {...JSON.parse(JSON.stringify(DEFAULT_SCHEDULE.days)), ...(saved.days||{})},
+      days: mergedDays,
       weeklyTargets: {...DEFAULT_SCHEDULE.weeklyTargets, ...(saved.weeklyTargets||{})},
       floors: {...DEFAULT_SCHEDULE.floors, ...(saved.floors||{})},
       activeRest: saved.activeRest||DEFAULT_SCHEDULE.activeRest
@@ -2412,6 +2415,7 @@ function openSettings() {
       <td style="padding:5px 6px"><input type="number" step="0.5" min="0" id="sch-${d}-work" value="${s.work}" style="width:46px"/></td>
       <td style="padding:5px 6px"><input type="number" step="0.5" min="0" id="sch-${d}-business" value="${s.business}" style="width:46px"/></td>
       <td style="padding:5px 6px"><input type="number" step="0.5" min="0" id="sch-${d}-exercise" value="${s.exercise}" style="width:46px"/></td>
+      <td style="padding:5px 6px"><input type="number" step="5" min="0" id="sch-${d}-emailMins" value="${s.emailMins ?? 60}" style="width:52px"/></td>
       <td style="padding:5px 6px"><input type="time" id="sch-${d}-wrapEnd" value="${s.wrapEnd}" style="width:96px"/></td>
       <td style="padding:5px 6px"><select id="sch-${d}-defaultLevel" style="width:46px">
         ${[1,2,3,4].map(l=>`<option value="${l}"${s.defaultLevel===l?' selected':''}>${l}</option>`).join('')}
@@ -2442,9 +2446,7 @@ function openSettings() {
   const ds = loadDayStructure();
   const dsBiz  = document.getElementById('ds-biz-morning');    if (dsBiz)  dsBiz.value  = ds.bizMorningHours;
   const dsBfst = document.getElementById('ds-breakfast');       if (dsBfst) dsBfst.value = ds.breakfastMins;
-  const dsEM   = document.getElementById('ds-email-morning');   if (dsEM)   dsEM.value   = ds.emailMorningMins;
   const dsLL   = document.getElementById('ds-lunch-learn');     if (dsLL)   dsLL.value   = ds.lunchLearnMins;
-  const dsEA   = document.getElementById('ds-email-afternoon'); if (dsEA)   dsEA.value   = ds.emailAfternoonMins;
   const dsBuf  = document.getElementById('ds-buffer');          if (dsBuf)  dsBuf.value  = ds.bufferMins;
   const dsGoal = document.getElementById('ds-ll-goal');         if (dsGoal) dsGoal.value = ds.lunchLearnGoal || '';
 
@@ -2457,6 +2459,8 @@ function saveSettings() {
     s.work = parseFloat(document.getElementById(`sch-${d}-work`).value)||0;
     s.business = parseFloat(document.getElementById(`sch-${d}-business`).value)||0;
     s.exercise = parseFloat(document.getElementById(`sch-${d}-exercise`).value)||0;
+    s.emailMins = parseInt(document.getElementById(`sch-${d}-emailMins`).value);
+    if (isNaN(s.emailMins)) s.emailMins = 60;
     s.wrapEnd = document.getElementById(`sch-${d}-wrapEnd`).value||s.wrapEnd;
     s.defaultLevel = parseInt(document.getElementById(`sch-${d}-defaultLevel`).value)||s.defaultLevel;
   });
@@ -2468,9 +2472,7 @@ function saveSettings() {
   const newDs = {
     bizMorningHours:    parseFloat(document.getElementById('ds-biz-morning')?.value)    || DEFAULT_DAY_STRUCT.bizMorningHours,
     breakfastMins:      parseInt(document.getElementById('ds-breakfast')?.value)        || DEFAULT_DAY_STRUCT.breakfastMins,
-    emailMorningMins:   parseInt(document.getElementById('ds-email-morning')?.value)    ?? DEFAULT_DAY_STRUCT.emailMorningMins,
     lunchLearnMins:     parseInt(document.getElementById('ds-lunch-learn')?.value)      || DEFAULT_DAY_STRUCT.lunchLearnMins,
-    emailAfternoonMins: parseInt(document.getElementById('ds-email-afternoon')?.value)  ?? DEFAULT_DAY_STRUCT.emailAfternoonMins,
     bufferMins:         parseInt(document.getElementById('ds-buffer')?.value)           || DEFAULT_DAY_STRUCT.bufferMins,
     lunchLearnGoal:  (document.getElementById('ds-ll-goal')?.value || '').trim()
   };
@@ -3118,17 +3120,23 @@ function buildTodayBlocks() {
   }
 
   // 2b. Morning email check (after breakfast — enforces "priorities before email" rule)
-  if (ds.emailMorningMins > 0) {
+  // Use per-day emailMins if set (day.emailMins), otherwise fall back to global defaults.
+  // Split 2:1 morning : afternoon (e.g. 90m → 60m + 30m, 60m → 40m + 20m).
+  const totalEmailMins = day.emailMins ?? (ds.emailMorningMins + ds.emailAfternoonMins);
+  const emailMorningMins   = totalEmailMins > 0 ? Math.round(totalEmailMins * 2 / 3) : 0;
+  const emailAfternoonMins = totalEmailMins - emailMorningMins;
+
+  if (emailMorningMins > 0) {
     blocks.push({
       id: 'email-morning', type: 'email',
       label: 'Email check', icon: '📧',
       color: 'var(--teal)',
-      startMins: cursor, durationMins: ds.emailMorningMins,
+      startMins: cursor, durationMins: emailMorningMins,
       tasks: [], calEvents: [],
       nudge: 'After your first priority is started · inbox sweep only',
       noteKey: null
     });
-    cursor += ds.emailMorningMins;
+    cursor += emailMorningMins;
   }
 
   // 3. Work block
@@ -3172,7 +3180,7 @@ function buildTodayBlocks() {
   }
 
   // 6. Afternoon block (gap before Australia email + buffer)
-  const afternoonEnd = wrapEndMins - ds.bufferMins - (ds.emailAfternoonMins > 0 ? ds.emailAfternoonMins : 0);
+  const afternoonEnd = wrapEndMins - ds.bufferMins - (emailAfternoonMins > 0 ? emailAfternoonMins : 0);
   const afternoonMins = afternoonEnd - cursor;
   if (afternoonMins > 5) {
     blocks.push({
@@ -3186,17 +3194,17 @@ function buildTodayBlocks() {
   }
 
   // 6b. Australia email check (Afternoon Zone, just before close-down)
-  if (ds.emailAfternoonMins > 0) {
+  if (emailAfternoonMins > 0) {
     blocks.push({
       id: 'email-afternoon', type: 'email',
       label: 'Australia email', icon: '📧',
       color: 'var(--amber)',
-      startMins: cursor, durationMins: ds.emailAfternoonMins,
+      startMins: cursor, durationMins: emailAfternoonMins,
       tasks: [], calEvents: [],
       nudge: 'Australia inbox · respond to urgent items · one sweep only',
       noteKey: null
     });
-    cursor += ds.emailAfternoonMins;
+    cursor += emailAfternoonMins;
   }
 
   // 7. Close-down buffer
