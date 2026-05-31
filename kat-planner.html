@@ -275,6 +275,33 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 .flex{display:flex}.gap8{gap:8px}.items-center{align-items:center}.justify-between{justify-content:space-between}
 .text-sm{font-size:12px}.text-gray{color:var(--gray)}.font-bold{font-weight:700}
 .mt8{margin-top:8px}.mb8{margin-bottom:8px}.divider{height:1px;background:var(--gray-light);margin:10px 0}
+
+/* Unified day schedule */
+.uday-blk{border-left:3px solid currentColor;padding:8px 0 6px 10px;margin-bottom:6px;border-radius:0 6px 6px 0;background:rgba(255,255,255,.6)}
+.uday-blk-hdr{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.uday-blk-time{font-size:11px;color:var(--gray);width:52px;flex-shrink:0;font-variant-numeric:tabular-nums}
+.uday-blk-label{font-size:13px;font-weight:700}
+.uday-blk-dur{font-size:11px;color:var(--gray);font-weight:400;margin-left:4px}
+.uday-task{display:flex;align-items:flex-start;gap:7px;padding:5px 6px;border-radius:6px;margin-bottom:2px;cursor:pointer}
+.uday-task:hover{background:var(--bg)}
+.uday-task.q1{background:rgba(229,62,62,.06);border-left:2px solid #E53E3E;padding-left:5px}
+.uday-task.done{opacity:.4}
+.uday-task.active-task{background:var(--teal-light);border-left:2px solid var(--teal);padding-left:5px}
+.uday-task-name{font-size:12px;line-height:1.35}
+.uday-task-meta{font-size:10px;color:var(--gray);margin-top:1px}
+.uday-start{padding:3px 9px;border-radius:5px;border:none;background:var(--teal);color:white;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;margin-top:1px}
+.uday-start:active{opacity:.8}
+.uday-start.running{background:var(--coral)}
+.uday-cal{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:5px;margin-bottom:2px;border-left:2px solid currentColor}
+.uday-meal{padding:8px 10px;border-radius:8px;margin-bottom:6px}
+.uday-meal-hdr{display:flex;align-items:center;gap:6px}
+.uday-nudge{font-size:12px;margin-top:3px;opacity:.85}
+.uday-note{width:100%;border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit;resize:none;margin-top:6px;outline:none;background:rgba(255,255,255,.8);min-height:44px}
+.uday-note:focus{border-color:var(--teal)}
+.uday-wrap{display:flex;align-items:center;gap:6px;padding:6px 0;color:var(--gray);font-size:12px;opacity:.7}
+.uday-allday{background:rgba(99,102,241,.07);border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;color:#4338CA}
+.uday-resched{font-size:11px;color:var(--gray);margin-bottom:8px;padding:4px 8px;background:var(--gray-light);border-radius:6px;font-style:italic}
+.uday-more{font-size:11px;color:var(--teal);cursor:pointer;padding:2px 6px;border:none;background:none}
 </style>
 </head>
 <body>
@@ -325,8 +352,52 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         </div>
       </div>
 
-      <!-- Today's plan -->
-      <div class="card">
+      <!-- Unified schedule card (today only; future-day preview lives in day-plan-body below) -->
+      <div class="card" id="unified-schedule-card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--teal)"></span>Today's schedule</span>
+          <div class="flex gap8">
+            <button class="btn btn-ghost btn-sm" onclick="toggleAddMeeting()">+ Meeting</button>
+            <button class="btn btn-ghost btn-sm" onclick="rescheduleDay()">↻ Reschedule</button>
+          </div>
+        </div>
+        <!-- Add-meeting form (moved here from old Meetings card) -->
+        <div id="add-meeting-form" style="display:none;padding:0 14px 10px">
+          <div class="flex gap8">
+            <input class="form-input" id="new-mtg-time" placeholder="Time (e.g. 2pm)" style="width:100px;flex:none"/>
+            <input class="form-input" id="new-mtg-name" placeholder="Meeting or appointment..." style="flex:1"/>
+            <button class="btn btn-primary btn-sm" onclick="addCustomMeeting()">Add</button>
+          </div>
+        </div>
+        <div class="card-body" id="unified-schedule-body">
+          <p class="text-sm text-gray">Loading…</p>
+        </div>
+        <!-- Add task bar -->
+        <div style="padding:0 14px 12px;border-top:1px solid var(--gray-light)">
+          <div class="add-task-bar" style="margin-top:8px">
+            <textarea class="add-task-input" id="day-task-input" rows="1" placeholder="Add a task (or tap 🎤)..." oninput="autoResize(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addTaskFromDay()}"></textarea>
+            <button class="icon-btn" id="voice-btn-day" onclick="toggleVoice('day-task-input','voice-btn-day')" title="Voice input">🎤</button>
+            <button class="icon-btn" onclick="addTaskFromDay()" title="Add task">＋</button>
+          </div>
+          <div class="add-task-fields" id="day-task-fields">
+            <select class="field-select" id="day-task-area">
+              <option value="">Area...</option>
+              <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option><option>Admin</option>
+            </select>
+            <select class="field-select" id="day-task-priority">
+              <option value="Q2 Schedule">High Priority</option>
+              <option value="Q1 Do Now">Top Priority</option>
+              <option value="Q3 Delegate">Medium Priority</option>
+              <option value="Q4 Drop">Low Priority</option>
+            </select>
+            <input class="field-num" id="day-task-mins" type="number" placeholder="Min" min="5" step="5"/>
+          </div>
+          <button class="text-sm text-gray" style="background:none;border:none;cursor:pointer;margin-top:4px" onclick="toggleDayFields()">⋯ more options</button>
+        </div>
+      </div>
+
+      <!-- Future-day plan preview (shown when previewOffset > 0 from the day-plan-body card) -->
+      <div class="card" id="day-plan-card">
         <div class="card-header">
           <span class="card-title"><span class="dot" style="background:var(--amber)"></span>Today's plan</span>
           <button class="btn btn-ghost btn-sm" onclick="openReplan()">↻ Re-plan</button>
@@ -409,75 +480,11 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         <div class="card-body" id="priorities-body"><!-- rendered by JS --></div>
       </div>
 
-      <!-- Zones -->
-      <div class="card">
-        <div class="card-header"><span class="card-title"><span class="dot" style="background:var(--gray)"></span>Day zones</span></div>
-        <div class="card-body">
-          <div class="zone-row" style="background:#E1F5EE">
-            <div class="zone-time" style="background:var(--teal)">6:30–12pm</div>
-            <div class="zone-info"><div class="zone-name" style="color:var(--teal-dark)">Morning Zone</div><div class="zone-desc">Deep work · Priorities first · No email until P1 started</div></div>
-          </div>
-          <div class="zone-row" style="background:#EEEDFE">
-            <div class="zone-time" style="background:var(--purple)">12–2pm</div>
-            <div class="zone-info"><div class="zone-name" style="color:#3C3489">Midday Zone</div><div class="zone-desc">Learning break · Lunch · Recharge</div></div>
-          </div>
-          <div class="zone-row" style="background:#FAEEDA">
-            <div class="zone-time" style="background:var(--amber)">2–4:30pm</div>
-            <div class="zone-info"><div class="zone-name" style="color:#633806">Afternoon Zone</div><div class="zone-desc">Meetings · Australia email · Lighter work</div></div>
-          </div>
-          <div class="zone-row" style="background:#FAECE7">
-            <div class="zone-time" style="background:var(--coral)">4:30–5pm</div>
-            <div class="zone-info"><div class="zone-name" style="color:#4A1B0C">Close-Down</div><div class="zone-desc">Wrap up · One Australia email check · Set tomorrow</div></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Today's Meetings -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title"><span class="dot" style="background:var(--amber)"></span>Meetings today</span>
-          <button class="btn btn-ghost btn-sm" onclick="toggleAddMeeting()">+ Add</button>
-        </div>
-        <div class="card-body" id="meetings-body"><!-- rendered by JS --></div>
-        <div id="add-meeting-form" style="display:none;padding:0 14px 12px">
-          <div class="flex gap8">
-            <input class="form-input" id="new-mtg-time" placeholder="Time (e.g. 2pm)" style="width:100px;flex:none"/>
-            <input class="form-input" id="new-mtg-name" placeholder="Meeting or appointment..." style="flex:1"/>
-            <button class="btn btn-primary btn-sm" onclick="addCustomMeeting()">Add</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Today's Tasks -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title"><span class="dot" style="background:var(--purple)"></span>Today's tasks</span>
-          <span class="text-sm text-gray" id="today-task-summary"></span>
-        </div>
-        <div class="card-body">
-          <div id="today-tasks-list"></div>
-          <div class="add-task-bar">
-            <textarea class="add-task-input" id="day-task-input" rows="1" placeholder="Add a task (or tap 🎤)..." oninput="autoResize(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addTaskFromDay()}"></textarea>
-            <button class="icon-btn" id="voice-btn-day" onclick="toggleVoice('day-task-input','voice-btn-day')" title="Voice input">🎤</button>
-            <button class="icon-btn" onclick="addTaskFromDay()" title="Add task">＋</button>
-          </div>
-          <div class="add-task-fields" id="day-task-fields">
-            <select class="field-select" id="day-task-area">
-              <option value="">Area...</option>
-              <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
-              <option>Admin</option>
-            </select>
-            <select class="field-select" id="day-task-priority">
-              <option value="Q2 Schedule">High Priority</option>
-              <option value="Q1 Do Now">Top Priority</option>
-              <option value="Q3 Delegate">Medium Priority</option>
-              <option value="Q4 Drop">Low Priority</option>
-            </select>
-            <input class="field-num" id="day-task-mins" type="number" placeholder="Min" min="5" step="5"/>
-          </div>
-          <button class="text-sm text-gray" style="background:none;border:none;cursor:pointer;margin-top:4px" onclick="toggleDayFields()">⋯ more options</button>
-        </div>
-      </div>
+      <!-- Hidden today-tasks-list and today-task-summary kept for JS compatibility -->
+      <div id="today-tasks-list" style="display:none"></div>
+      <span id="today-task-summary" style="display:none"></span>
+      <!-- Hidden meetings-body kept for JS compatibility -->
+      <div id="meetings-body" style="display:none"></div>
 
     </div><!-- end day panel -->
 
@@ -990,6 +997,30 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
       <input type="text" id="cal-pat-travel" class="form-input" style="width:100%" placeholder="Flight,Travel,Commute,Drive to,Airport"/>
     </div>
 
+    <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Day structure</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Business block (hours)</label>
+        <input type="number" id="ds-biz-morning" class="form-input" min="0" step="0.5" style="width:100%"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Breakfast (mins)</label>
+        <input type="number" id="ds-breakfast" class="form-input" min="5" step="5" style="width:100%"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Lunch &amp; Learn (mins)</label>
+        <input type="number" id="ds-lunch-learn" class="form-input" min="15" step="15" style="width:100%"/>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Close-down buffer (mins)</label>
+        <input type="number" id="ds-buffer" class="form-input" min="0" step="5" style="width:100%"/>
+      </div>
+    </div>
+    <div style="margin-bottom:18px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:2px">Lunch &amp; Learn goal / focus (shows in the block)</label>
+      <input type="text" id="ds-ll-goal" class="form-input" style="width:100%" placeholder="e.g. Reading: The Brain That Changes Itself"/>
+    </div>
+
     <div class="flex gap8">
       <button class="btn btn-primary" style="flex:1" onclick="saveSettings()">Save</button>
       <button class="btn btn-ghost" style="flex:1" onclick="closeSettings()">Cancel</button>
@@ -1092,7 +1123,8 @@ let state = {
   pillars: {}, reflection: {}, dayRating: null,
   symSev: null, matrixAnswers: {}, suggestedLevel: null,
   dayFieldsVisible: false, allFieldsVisible: false, voiceActive: null, recognition: null,
-  timeLogs: [], weekTimeLogs: [], timer: null, timerInterval: null
+  timeLogs: [], weekTimeLogs: [], timer: null, timerInterval: null,
+  rescheduledFrom: null
 };
 
 // Sprint cadence: 14-day blocks running Saturday → Friday. An "anchor"
@@ -1466,34 +1498,35 @@ function computeDayPlan(level, schedKey) {
 
 function renderDayPlan() {
   const el = document.getElementById('day-plan-body');
+  const planCard = document.getElementById('day-plan-card');
+  const unifiedCard = document.getElementById('unified-schedule-card');
   if (!el) return;
+
   const preview = previewOffset > 0;
-  const schedKey = preview ? previewSchedKey() : todaySchedKey();
-  const level = preview ? previewDefaultLevel() : state.level;
-  const p = computeDayPlan(level, schedKey);
+
+  // Show/hide cards based on preview mode
+  if (planCard) planCard.style.display = preview ? 'block' : 'none';
+  if (unifiedCard) unifiedCard.style.display = preview ? 'none' : 'block';
+
+  if (!preview) {
+    // Today: render the unified schedule instead
+    renderUnifiedSchedule();
+    return;
+  }
+
+  // Future-day preview: show the schedule timeline
+  const schedKey = previewSchedKey();
+  const level = previewDefaultLevel();
   const lc = LEVEL_CONFIG[level];
   const nav = `<div class="plan-nav">
-      <button class="plan-nav-btn" onclick="shiftPreview(-1)"${previewOffset===0?' disabled':''}>◀</button>
+      <button class="plan-nav-btn" onclick="shiftPreview(-1)">◀</button>
       <span class="plan-nav-day">${esc(previewDayLabel())}</span>
       <button class="plan-nav-btn" onclick="shiftPreview(1)"${previewOffset>=7?' disabled':''}>▶</button>
-      ${preview?`<button class="plan-nav-today" onclick="resetPreview()">Back to today</button>`:''}
+      <button class="plan-nav-today" onclick="resetPreview()">Back to today</button>
     </div>`;
 
-  if (preview) {
-    // Full day schedule view for tomorrow and beyond
-    const levelLine = `<div class="text-sm text-gray" style="margin-bottom:8px"><strong style="color:var(--black)">${lc.label}</strong> · default for ${esc(previewDayLabel())} <span class="plan-preview-badge">preview</span></div>`;
-    el.innerHTML = nav + levelLine + renderScheduleTimeline(schedKey, previewDate());
-  } else {
-    // Today: keep the concise chips + note view
-    const chip = (area, hrs) => `<div class="plan-chip${p.protect===area?' pc-protect':''}">
-      <span class="pc-area">${area}${p.protect===area?' ⚖️':''}</span><span class="pc-hrs">${hrs}h</span></div>`;
-    let chips = chip('Work', p.work);
-    if (!p.weekend) { chips += chip('Business', p.business) + chip('Exercise', p.exercise); }
-    const levelLine = `<div class="text-sm text-gray" style="margin-bottom:6px"><strong style="color:var(--black)">${lc.label}</strong></div>`;
-    el.innerHTML = nav + levelLine +
-      `<div class="plan-chips">${chips}</div>
-      <div class="plan-note">${esc(p.note)}</div>`;
-  }
+  const levelLine = `<div class="text-sm text-gray" style="margin-bottom:8px"><strong style="color:var(--black)">${lc.label}</strong> · default for ${esc(previewDayLabel())} <span class="plan-preview-badge">preview</span></div>`;
+  el.innerHTML = nav + levelLine + renderScheduleTimeline(schedKey, previewDate());
 }
 
 // ─── Mid-day re-projection ───────────────────────────────────────
@@ -1770,12 +1803,13 @@ function stopTimer() {
   const {area, label, note} = state.timer;
   clearTimerState();
   renderTimerBanner(); // hide banner immediately
+  renderUnifiedSchedule(); // clear running state on ▶ button
   if (mins < 1) { toast('Timer under 1 min — not logged'); return; }
   const fields = {Date: state.dayKey, Area: area, Minutes:mins, Note: note || label.replace(/^[^A-Za-z]+/,'')};
   AT.logTime(fields).then(()=>{ loadTimeLogs(); renderWorkBar(); toast(`Logged ${mins}m · ${area}`); })
     .catch(e=>toast('Error logging time: '+e.message));
 }
-function cancelTimer() { clearTimerState(); renderTimerBanner(); toast('Timer cancelled'); }
+function cancelTimer() { clearTimerState(); renderTimerBanner(); renderUnifiedSchedule(); toast('Timer cancelled'); }
 function clearTimerState() {
   state.timer = null;
   localStorage.removeItem('kat-timer');
@@ -1934,6 +1968,8 @@ function togglePDone(i) { state.priorities[i].done=!state.priorities[i].done; sa
 
 // ─── Meetings ──────────────────────────────────────────────────
 function renderMeetings() {
+  // Calendar events are now shown inline in the unified schedule
+  renderUnifiedSchedule();
   const standing = STANDING[state.dayName]||[];
   const custom = state.customMeetings;
   // Calendar events for today — visible, non-all-day, labelled by type
@@ -1975,9 +2011,10 @@ function addCustomMeeting() {
   const n=document.getElementById('new-mtg-name').value.trim();
   if (!n) return;
   state.customMeetings.push({time:t||'—',name:n,badge:'badge-alt',label:'Custom'});
-  saveLocalState(); renderMeetings();
+  saveLocalState(); renderMeetings(); // renderMeetings now calls renderUnifiedSchedule
   document.getElementById('new-mtg-time').value='';
   document.getElementById('new-mtg-name').value='';
+  document.getElementById('add-meeting-form').style.display='none';
 }
 
 function delCustomMeeting(i) { state.customMeetings.splice(i,1); saveLocalState(); renderMeetings(); }
@@ -2113,6 +2150,8 @@ function getTodayTasks() {
 }
 
 function renderTodayTasks() {
+  // Unified schedule shows tasks inline — also re-render it
+  renderUnifiedSchedule();
   const tasks = getTodayTasks();
   const el = document.getElementById('today-tasks-list');
   const lc = LEVEL_CONFIG[state.level];
@@ -2384,6 +2423,14 @@ function openSettings() {
   const ael = document.getElementById('cal-pat-appt');     if (ael) ael.value = calCfg.apptPatterns||'Doctor,Dentist,Physio,Therapy,Medical,Appointment,Checkup';
   const tel = document.getElementById('cal-pat-travel');   if (tel) tel.value = calCfg.travelPatterns||'Flight,Travel,Commute,Drive to,Airport,Train,Uber,Taxi';
 
+  // Populate day structure fields
+  const ds = loadDayStructure();
+  const dsBiz = document.getElementById('ds-biz-morning'); if (dsBiz) dsBiz.value = ds.bizMorningHours;
+  const dsBfst = document.getElementById('ds-breakfast'); if (dsBfst) dsBfst.value = ds.breakfastMins;
+  const dsLL = document.getElementById('ds-lunch-learn'); if (dsLL) dsLL.value = ds.lunchLearnMins;
+  const dsBuf = document.getElementById('ds-buffer'); if (dsBuf) dsBuf.value = ds.bufferMins;
+  const dsGoal = document.getElementById('ds-ll-goal'); if (dsGoal) dsGoal.value = ds.lunchLearnGoal || '';
+
   document.getElementById('settings-modal').style.display='flex';
 }
 function closeSettings() { document.getElementById('settings-modal').style.display='none'; }
@@ -2400,6 +2447,15 @@ function saveSettings() {
     SCHEDULE.weeklyTargets[k] = parseFloat(document.getElementById(`tgt-${k}`).value)||0;
   });
   saveSchedule();
+  // Save day structure
+  const newDs = {
+    bizMorningHours: parseFloat(document.getElementById('ds-biz-morning')?.value) || DEFAULT_DAY_STRUCT.bizMorningHours,
+    breakfastMins:   parseInt(document.getElementById('ds-breakfast')?.value)     || DEFAULT_DAY_STRUCT.breakfastMins,
+    lunchLearnMins:  parseInt(document.getElementById('ds-lunch-learn')?.value)   || DEFAULT_DAY_STRUCT.lunchLearnMins,
+    bufferMins:      parseInt(document.getElementById('ds-buffer')?.value)        || DEFAULT_DAY_STRUCT.bufferMins,
+    lunchLearnGoal:  (document.getElementById('ds-ll-goal')?.value || '').trim()
+  };
+  saveDayStructure(newDs);
   // Save calendar URLs and refresh events if changed
   const oldCalCfg = loadCalUrls();
   const newCalCfg = {
@@ -2419,6 +2475,7 @@ function saveSettings() {
     renderDayPlan(); renderMeetings(); // re-classify without re-fetching
   }
   closeSettings();
+  renderUnifiedSchedule();
   toast('Schedule saved');
 }
 
@@ -2459,6 +2516,7 @@ async function applyTaskDone(id, done, actualMins) {
     if (isSprint) renderSprintTasks();
   } catch(e) { toast('Error: '+e.message); }
 }
+
 
 async function deleteTask(id) {
   const t = state.tasks.find(t=>t.id===id);
@@ -2986,6 +3044,341 @@ function renderScheduleTimeline(schedKey, date) {
     </div>`;
   }
   return html;
+}
+
+// ─── Day Structure ─────────────────────────────────────────────
+const DEFAULT_DAY_STRUCT = { bizMorningHours:2, breakfastMins:15, lunchLearnMins:60, bufferMins:30, lunchLearnGoal:'' };
+
+function loadDayStructure() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('kat-day-struct')||'null');
+    if (!saved) return {...DEFAULT_DAY_STRUCT};
+    return {...DEFAULT_DAY_STRUCT, ...saved};
+  } catch(e) { return {...DEFAULT_DAY_STRUCT}; }
+}
+
+function saveDayStructure(obj) {
+  localStorage.setItem('kat-day-struct', JSON.stringify(obj));
+}
+
+// ─── Unified Day Schedule ──────────────────────────────────────
+function buildTodayBlocks() {
+  const ds = loadDayStructure();
+  const schedKey = todaySchedKey();
+  const day = SCHEDULE.days[schedKey];
+  if (!day) return [];
+
+  const dateStr = state.dayKey;
+  let cursor = timeToMins(day.start || '06:30');
+  const wrapEndMins = timeToMins(day.wrapEnd || '17:30');
+  const blocks = [];
+
+  // 1. Business (biz-morning)
+  const bizMins = Math.round(ds.bizMorningHours * 60);
+  if (bizMins > 0) {
+    blocks.push({
+      id: 'biz-morning', type: 'work-block',
+      label: 'Business block', icon: '🐕',
+      color: 'var(--teal-dark)',
+      startMins: cursor, durationMins: bizMins,
+      tasks: [], calEvents: [], nudge: '', noteKey: null
+    });
+    cursor += bizMins;
+  }
+
+  // 2. Breakfast
+  if (ds.breakfastMins > 0) {
+    blocks.push({
+      id: 'breakfast', type: 'meal',
+      label: 'Breakfast', icon: '🍳',
+      color: '#F59E0B',
+      startMins: cursor, durationMins: ds.breakfastMins,
+      tasks: [], calEvents: [], nudge: '🚫 Away from screen', noteKey: null
+    });
+    cursor += ds.breakfastMins;
+  }
+
+  // 3. Work block
+  const workMins = Math.round((day.work || 0) * 60);
+  if (workMins > 0) {
+    blocks.push({
+      id: 'work-main', type: 'work-block',
+      label: 'Work block', icon: '⚡',
+      color: 'var(--teal)',
+      startMins: cursor, durationMins: workMins,
+      tasks: [], calEvents: [], nudge: '', noteKey: null
+    });
+    cursor += workMins;
+  }
+
+  // 4. Exercise
+  const exerciseMins = Math.round((day.exercise || 0) * 60);
+  if (exerciseMins > 0) {
+    blocks.push({
+      id: 'exercise', type: 'work-block',
+      label: 'Exercise', icon: '🏃',
+      color: 'var(--purple)',
+      startMins: cursor, durationMins: exerciseMins,
+      tasks: [], calEvents: [], nudge: '', noteKey: null
+    });
+    cursor += exerciseMins;
+  }
+
+  // 5. Lunch & Learn
+  if (ds.lunchLearnMins > 0) {
+    blocks.push({
+      id: 'lunch-learn', type: 'meal',
+      label: 'Lunch & Learn', icon: '🍽️',
+      color: 'var(--purple)',
+      startMins: cursor, durationMins: ds.lunchLearnMins,
+      tasks: [], calEvents: [],
+      nudge: ds.lunchLearnGoal || '🎓 Learning time',
+      noteKey: 'lunch-learn'
+    });
+    cursor += ds.lunchLearnMins;
+  }
+
+  // 6. Afternoon block (gap before buffer)
+  const afternoonEnd = wrapEndMins - ds.bufferMins;
+  const afternoonMins = afternoonEnd - cursor;
+  if (afternoonMins > 5) {
+    blocks.push({
+      id: 'afternoon', type: 'work-block',
+      label: 'Afternoon', icon: '📋',
+      color: 'var(--amber)',
+      startMins: cursor, durationMins: afternoonMins,
+      tasks: [], calEvents: [], nudge: '', noteKey: null
+    });
+    cursor += afternoonMins;
+  }
+
+  // 7. Close-down buffer
+  if (ds.bufferMins > 0) {
+    blocks.push({
+      id: 'closedown', type: 'buffer',
+      label: 'Close-down', icon: '💭',
+      color: 'var(--coral)',
+      startMins: cursor, durationMins: ds.bufferMins,
+      tasks: [], calEvents: [],
+      nudge: 'Wrap up · Check tomorrow · Set intentions',
+      noteKey: null
+    });
+    cursor += ds.bufferMins;
+  }
+
+  // 8. Wrap marker
+  blocks.push({
+    id: 'wrap', type: 'wrap',
+    label: 'Wrap', icon: '🏁',
+    color: 'var(--gray)',
+    startMins: wrapEndMins, durationMins: 0,
+    tasks: [], calEvents: [], nudge: '', noteKey: null
+  });
+
+  // Assign tasks to blocks
+  const todayTasks = getTodayTasks();
+  const assignedTaskIds = new Set();
+
+  function assignTasksToBlock(blk, areas) {
+    const filtered = todayTasks.filter(t => {
+      if (assignedTaskIds.has(t.id)) return false;
+      const taskArea = Array.isArray(t.fields.Area) ? t.fields.Area[0] : (t.fields.Area || '');
+      return areas.includes(taskArea) || (areas.includes('__unassigned__') && !taskArea);
+    });
+    filtered.sort(prioSort);
+    const cap = 8;
+    blk.tasks = filtered.slice(0, cap);
+    blk.tasks.forEach(t => assignedTaskIds.add(t.id));
+    blk._extraTasks = Math.max(0, filtered.length - cap);
+  }
+
+  for (const blk of blocks) {
+    if (blk.type !== 'work-block') continue;
+    if (blk.id === 'biz-morning') assignTasksToBlock(blk, ['Business']);
+    else if (blk.id === 'work-main') assignTasksToBlock(blk, ['Work Work', '__unassigned__']);
+    else if (blk.id === 'exercise') assignTasksToBlock(blk, ['Health & Fitness']);
+    else if (blk.id === 'afternoon') assignTasksToBlock(blk, ['Admin']);
+  }
+
+  // Assign calendar events to blocks
+  const calEvs = getVisibleEventsForDate(dateStr);
+  const KIND_ICON  = { appointment:'📅', travel:'✈️', meeting:'👥' };
+  const KIND_COLOR = { appointment:'var(--amber)', travel:'#3B82F6', meeting:'#6366f1' };
+
+  calEvs.filter(e => !e.allDay).forEach(ev => {
+    const d = ev.start instanceof Date ? ev.start : new Date(ev.start);
+    const evMins = d.getHours() * 60 + d.getMinutes();
+    const ed = ev.end instanceof Date ? ev.end : (ev.end ? new Date(ev.end) : null);
+    const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
+    const calObj = {
+      startMins: evMins, durationMins: dur,
+      title: ev.title || 'Event',
+      icon: KIND_ICON[ev.kind] || '📅',
+      color: KIND_COLOR[ev.kind] || '#6366f1',
+      kind: ev.kind
+    };
+    // Find the work-block that contains this event
+    let assigned = false;
+    for (const blk of blocks) {
+      if (blk.type !== 'work-block' && blk.type !== 'meal') continue;
+      if (evMins >= blk.startMins && evMins < blk.startMins + blk.durationMins) {
+        blk.calEvents.push(calObj);
+        assigned = true;
+        break;
+      }
+    }
+    if (!assigned) {
+      // Standalone — attach to nearest work block before it
+      const before = blocks.filter(b => b.type === 'work-block' && b.startMins <= evMins);
+      if (before.length) before[before.length-1].calEvents.push(calObj);
+    }
+  });
+
+  // Store all-day events separately
+  blocks._allDay = calEvs.filter(e => e.allDay);
+
+  return blocks;
+}
+
+function renderUnifiedSchedule() {
+  const el = document.getElementById('unified-schedule-body');
+  if (!el) return;
+
+  const blocks = buildTodayBlocks();
+  const fh = m => m >= 60 ? `${(m/60).toFixed(m%60===0?0:1)}h` : `${m}m`;
+  let html = '';
+
+  // Rescheduled note
+  if (state.rescheduledFrom) {
+    const rf = state.rescheduledFrom;
+    const rts = `${rf.getHours()%12||12}:${String(rf.getMinutes()).padStart(2,'0')} ${rf.getHours()>=12?'pm':'am'}`;
+    html += `<div class="uday-resched">↻ Rescheduled from ${rts} — showing remaining tasks</div>`;
+  }
+
+  // All-day events banner
+  const allDay = blocks._allDay || [];
+  if (allDay.length) {
+    html += `<div class="uday-allday">📅 All day: ${allDay.map(e=>esc(e.title||'')).join(' · ')}</div>`;
+  }
+
+  for (const blk of blocks) {
+    if (blk.type === 'wrap') {
+      html += `<div class="uday-wrap">
+        <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
+        <span>🏁 Wrap</span>
+      </div>`;
+      continue;
+    }
+
+    if (blk.type === 'meal') {
+      const bgMap = {
+        'var(--purple)': 'rgba(127,119,221,.07)',
+        '#F59E0B': 'rgba(245,158,11,.07)',
+        'var(--coral)': 'rgba(216,90,48,.07)'
+      };
+      const bg = bgMap[blk.color] || 'rgba(0,0,0,.04)';
+      html += `<div class="uday-meal" style="background:${bg};border-left:3px solid ${blk.color}">
+        <div class="uday-meal-hdr">
+          <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
+          <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
+          <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+        </div>
+        ${blk.nudge ? `<div class="uday-nudge" style="color:${blk.color}">${esc(blk.nudge)}</div>` : ''}
+        ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" id="lunch-learn-note" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-'+state.dayKey,this.value)">${esc(localStorage.getItem('kat-lunch-'+state.dayKey)||'')}</textarea>` : ''}
+      </div>`;
+      continue;
+    }
+
+    if (blk.type === 'buffer') {
+      html += `<div class="uday-meal" style="background:#FDF2F0;border-left:3px solid var(--coral)">
+        <div class="uday-meal-hdr">
+          <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
+          <span class="uday-blk-label" style="color:var(--coral)">💭 Close-down</span>
+          <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+        </div>
+        <div class="uday-nudge" style="color:var(--coral)">${esc(blk.nudge)}</div>
+      </div>`;
+      continue;
+    }
+
+    if (blk.type === 'work-block') {
+      // Skip rescheduled blocks that end before current time
+      let skipBlock = false;
+      if (state.rescheduledFrom) {
+        const nowMins = state.rescheduledFrom.getHours()*60 + state.rescheduledFrom.getMinutes();
+        if (blk.startMins + blk.durationMins <= nowMins) skipBlock = true;
+      }
+      if (skipBlock && !blk.tasks.length && !blk.calEvents.length) continue;
+
+      let tasksHtml = '';
+      for (const t of blk.tasks) {
+        const f = t.fields;
+        const done = f.Status === 'Done';
+        const q = f.Priority || '';
+        const isQ1 = q === 'Q1 Do Now';
+        const taskArea = Array.isArray(f.Area) ? f.Area[0] : (f.Area || '');
+        const isRunning = state.timer && state.timer.area === taskArea && state.timer.label === (f.Name||'');
+        const mins = f['Estimated Minutes'];
+        let minsStr = '';
+        if (mins) minsStr = mins >= 60 ? `${Math.floor(mins/60)}h${mins%60?mins%60+'m':''}` : `${mins}m`;
+        const pred = (state.predicted||{})[t.id];
+        const predStr = pred && !done ? `🔮 ~${fmtPredDate(pred)}` : '';
+        const metaParts = [taskArea, minsStr, predStr, isQ1?'<span style="font-size:9px;background:var(--red-light);color:#A32D2D;padding:1px 5px;border-radius:8px;font-weight:700">Q1</span>':''].filter(Boolean);
+
+        tasksHtml += `<div class="uday-task${isQ1?' q1':''}${done?' done':''}${isRunning?' active-task':''}" onclick="openEditTask('${t.id}')">
+          <div class="task-check${done?' checked':''}" onclick="event.stopPropagation();toggleTaskDone('${t.id}',${!done})"></div>
+          <div style="flex:1">
+            <div class="uday-task-name${done?' striked':''}">${esc(f.Name||'')}${t._isSprint?' 🎯':''}</div>
+            <div class="uday-task-meta">${metaParts.join(' · ')}</div>
+          </div>
+          <button class="uday-start${isRunning?' running':''}" onclick="event.stopPropagation();startTaskTimer('${taskArea}','${(f.Name||'').replace(/'/g,"\\'")}')">▶</button>
+        </div>`;
+      }
+      if (blk._extraTasks > 0) {
+        tasksHtml += `<button class="uday-more">+ ${blk._extraTasks} more</button>`;
+      }
+      if (!blk.tasks.length) {
+        tasksHtml = `<div class="text-sm text-gray" style="padding:3px 6px;font-style:italic">No tasks queued</div>`;
+      }
+
+      let calHtml = '';
+      for (const ce of blk.calEvents) {
+        calHtml += `<div class="uday-cal" style="border-left-color:${ce.color}">
+          <span class="uday-blk-time">${minsToTime(ce.startMins)}</span>
+          <span style="color:${ce.color}">${ce.icon} ${esc(ce.title)}</span>
+          <span class="uday-blk-dur">${fh(ce.durationMins)}</span>
+        </div>`;
+      }
+
+      html += `<div class="uday-blk" style="border-left-color:${blk.color}">
+        <div class="uday-blk-hdr">
+          <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
+          <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
+          <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+        </div>
+        ${tasksHtml}
+        ${calHtml}
+      </div>`;
+    }
+  }
+
+  if (!html) html = '<p class="text-sm text-gray">No schedule template for today.</p>';
+  el.innerHTML = html;
+}
+
+function startTaskTimer(area, taskName) {
+  if (state.timer) { toast('Stop the current timer first ■'); return; }
+  state.timer = { area, label: taskName, note: 'Task: ' + taskName, startTs: Date.now() };
+  localStorage.setItem('kat-timer', JSON.stringify(state.timer));
+  renderTimerBanner();
+  renderUnifiedSchedule();
+  toast('⏱ ' + taskName);
+}
+
+function rescheduleDay() {
+  state.rescheduledFrom = new Date();
+  renderUnifiedSchedule();
+  toast('↻ Rescheduled from ' + state.rescheduledFrom.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}));
 }
 
 // ─── Utils ─────────────────────────────────────────────────────
