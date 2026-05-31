@@ -247,6 +247,12 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 .project-name{font-size:13px;font-weight:600;flex:1}
 .sprint-task-row{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border-radius:8px;margin-bottom:4px;background:#FAFAF8;border:1px solid var(--gray-light)}
 .sprint-task-row.done{opacity:.5}
+/* Capacity bar */
+.cap-bar-track{background:var(--gray-light);border-radius:4px;height:8px;overflow:hidden;margin:6px 0 4px}
+.cap-bar-fill{height:8px;border-radius:4px;transition:width .3s}
+.cap-ok{color:var(--teal);font-weight:700}
+.cap-warn{color:var(--amber);font-weight:700}
+.cap-over{color:#E53E3E;font-weight:700}
 .pull-btn{font-size:11px;padding:4px 9px;border-radius:6px;border:1.5px solid var(--teal);color:var(--teal);background:var(--white);cursor:pointer;font-weight:600;flex-shrink:0;white-space:nowrap;transition:.15s}
 .pull-btn.pulled{background:var(--teal-light);border-color:var(--teal-mid);color:var(--teal-dark);cursor:default}
 .section-toggle{cursor:pointer;user-select:none}
@@ -683,6 +689,10 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <p class="text-sm text-gray">Tasks sitting untouched for 7+ days will appear here.</p>
         </div>
       </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title"><span class="dot" style="background:var(--teal)"></span>Sprint capacity</span></div>
+        <div class="card-body" id="sprint-cap-week-body"><p class="text-sm text-gray">Loading…</p></div>
+      </div>
       <button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="loadWeekData()">↻ Refresh week data</button>
     </div>
 
@@ -759,6 +769,11 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <button class="btn btn-primary btn-sm" onclick="addSprintTask('Tim')">Add</button>
           </div>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title"><span class="dot" style="background:var(--amber)"></span>Capacity check</span></div>
+        <div class="card-body" id="sprint-cap-sprint-body"><p class="text-sm text-gray">Loading…</p></div>
       </div>
 
       <div class="card">
@@ -1998,6 +2013,7 @@ function mergeSprintTasksIntoState(sprintTasks) {
   renderAllTasks();
   renderWorkBar();
   checkStaleTasks();
+  updateCapacityCards();
 }
 
 async function loadTasks() {
@@ -2570,6 +2586,83 @@ async function loadWeekData() {
   document.getElementById('pillar-averages').innerHTML = logs.length
     ? PILLARS.map(p=>{ const avg=pillarCounts[p]?(pillarSums[p]/pillarCounts[p]).toFixed(1):'—'; return `<div class="pillar-row"><div class="pillar-name">${p}</div><div style="font-size:16px;font-weight:700;color:var(--teal)">${avg}</div></div>`; }).join('')
     : '<p class="text-sm text-gray">Create the Daily Log table in Airtable to see pillar averages here.</p>';
+
+  updateCapacityCards();
+}
+
+// ─── Sprint capacity ───────────────────────────────────────────
+// Compute the end (Friday) of the CURRENTLY LIVE sprint without touching sprintState.
+function currentSprintEndDate() {
+  if (!sprintState.anchorStart) return null;
+  const anchor = snapToSaturday(sprintState.anchorStart + 'T00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const periods = Math.floor((today - anchor) / (14 * 86400000));
+  const sprintStart = new Date(anchor.getTime() + periods * 14 * 86400000);
+  return new Date(sprintStart.getTime() + 13 * 86400000); // +13 days = Friday
+}
+
+function computeSprintCapacity() {
+  const end = currentSprintEndDate();
+  if (!end) return null;
+
+  // Remaining work = all incomplete Kat sprint tasks in state.tasks
+  const remainingTasks = state.tasks.filter(t =>
+    t._isSprint && t.fields.Status !== 'Done' && t.fields.Status !== 'Deferred'
+  );
+  const remainingMins = remainingTasks.reduce((s, t) => s + (t.fields['Estimated Minutes'] || 0), 0);
+  const unestimated = remainingTasks.filter(t => !t.fields['Estimated Minutes']).length;
+
+  // Available capacity: each day today→sprint-end Friday per SCHEDULE (today net of logged work)
+  const today = new Date(); today.setHours(0,0,0,0);
+  let availableMins = 0;
+  let cursor = new Date(today);
+  while (cursor <= end) {
+    availableMins += dayCapacityMins(cursor, cursor.getTime() === today.getTime());
+    cursor = new Date(cursor.getTime() + 86400000);
+  }
+
+  const daysLeft = Math.max(0, Math.round((end - today) / 86400000));
+  const overflowMins = remainingMins - availableMins;
+  return { remainingMins, availableMins, isOver: overflowMins > 0, overflowMins, daysLeft, remainingTasks, unestimated, end };
+}
+
+function renderSprintCapacityHTML() {
+  const end = currentSprintEndDate();
+  if (!end) return '<p class="text-sm text-gray">Set sprint dates to see capacity.</p>';
+  const cap = computeSprintCapacity();
+  if (!cap) return '<p class="text-sm text-gray">No sprint configured.</p>';
+  const { remainingMins, availableMins, isOver, overflowMins, daysLeft, remainingTasks, unestimated } = cap;
+
+  const fmtH = m => (m / 60).toFixed(1) + 'h';
+  const spare = availableMins - remainingMins;
+  const pct = availableMins > 0 ? Math.min(100, Math.round(remainingMins / availableMins * 100)) : (remainingMins > 0 ? 100 : 0);
+  const barColor = isOver ? '#E53E3E' : pct >= 80 ? 'var(--amber)' : 'var(--teal)';
+  const cls = isOver ? 'cap-over' : pct >= 80 ? 'cap-warn' : 'cap-ok';
+  const msg = isOver
+    ? `⚠️ Over capacity by ${fmtH(overflowMins)} — ${Math.abs(Math.round(overflowMins/60*2)/2)}h won't fit`
+    : pct >= 80
+    ? `⚡ Tight — only ${fmtH(spare)} spare`
+    : `✓ Fits — ${fmtH(spare)} spare`;
+  const endFmt = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  return `<div>
+    <div class="flex justify-between" style="font-size:12px;color:var(--gray);margin-bottom:2px">
+      <span>${remainingTasks.length} tasks · ${fmtH(remainingMins)} remaining work</span>
+      <span>${fmtH(availableMins)} avail · ends ${endFmt}</span>
+    </div>
+    <div class="cap-bar-track"><div class="cap-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+    <div class="${cls}" style="font-size:14px;margin-bottom:4px">${msg}</div>
+    ${unestimated ? `<div class="text-sm text-gray">⚠ ${unestimated} task${unestimated > 1 ? 's have' : ' has'} no estimate — real load may be higher</div>` : ''}
+    <div class="text-sm text-gray">${daysLeft === 0 ? '🏁 Sprint ends today' : `${daysLeft} day${daysLeft !== 1 ? 's' : ''} left in sprint`}</div>
+  </div>`;
+}
+
+function updateCapacityCards() {
+  const html = renderSprintCapacityHTML();
+  ['sprint-cap-week-body', 'sprint-cap-sprint-body'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
 }
 
 // ─── Utils ─────────────────────────────────────────────────────
@@ -2639,6 +2732,7 @@ function renderSprintTab() {
   renderSprintTasks();
   renderSprintReviewForm();
   populateDropdowns();
+  updateCapacityCards();
 }
 
 function renderSprintHeaderHTML() {
