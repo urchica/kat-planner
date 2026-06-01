@@ -973,6 +973,20 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
     <ul style="font-size:12px;color:var(--gray);margin:0 0 18px;padding-left:18px;line-height:1.6" id="settings-rest-list"></ul>
 
     <div style="font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Calendar connections</div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600;display:block;margin-bottom:4px">🌐 Your timezone (events display in this zone)</label>
+      <select id="cal-timezone" class="form-select" style="width:100%">
+        <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+        <option value="America/Denver">Mountain (Denver)</option>
+        <option value="America/Phoenix">Mountain — no DST (Phoenix)</option>
+        <option value="America/Chicago">Central (Chicago)</option>
+        <option value="America/New_York">Eastern (New York)</option>
+        <option value="Australia/Sydney">Australia Eastern (Sydney)</option>
+        <option value="Europe/London">UK (London)</option>
+        <option value="UTC">UTC</option>
+      </select>
+      <div style="font-size:11px;color:var(--gray);margin-top:3px">Defaults to Pacific. Change when travelling so meetings show in your current local time.</div>
+    </div>
     <div style="font-size:12px;color:var(--gray);margin-bottom:10px;line-height:1.6">
       Paste your calendar's <strong>iCal / webcal URL</strong> to see events in your day schedule and meetings card.<br>
       📧 <strong>Outlook:</strong> Calendar → Share → Publish to web → ICS link<br>
@@ -2015,7 +2029,7 @@ function renderMeetings() {
   const KIND_LABEL = { appointment:'📅 Appt', travel:'✈️ Travel', meeting:'👥 Meeting' };
   const calToday = getVisibleEventsForDate(state.dayKey).filter(e => !e.allDay).map(e => {
     const d = e.start instanceof Date ? e.start : new Date(e.start);
-    return { time: d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
+    return { time: eventTimeStr(d),  // target timezone
       name: e.title||'Event', badge:'badge-alt', label: KIND_LABEL[e.kind]||'📅 Cal' };
   });
   const el = document.getElementById('meetings-body');
@@ -2489,6 +2503,7 @@ function openSettings() {
   document.getElementById('settings-floor-ex').textContent = SCHEDULE.floors.exercise;
   document.getElementById('settings-rest-list').innerHTML = SCHEDULE.activeRest.map(r=>`<li>${esc(r)}</li>`).join('');
 
+  const tzEl = document.getElementById('cal-timezone'); if (tzEl) tzEl.value = getTargetTz();
   const calCfg = loadCalUrls();
   const oel = document.getElementById('cal-url-outlook');  if (oel) oel.value = calCfg.outlook||'';
   const gel = document.getElementById('cal-url-google');   if (gel) gel.value = calCfg.google||'';
@@ -2538,6 +2553,10 @@ function saveSettings() {
   };
   if (isNaN(newDs.emailMorningMin)) newDs.emailMorningMin = DEFAULT_DAY_STRUCT.emailMorningMin;
   saveDayStructure(newDs);
+  // Save timezone
+  const oldTz = getTargetTz();
+  const newTz = document.getElementById('cal-timezone')?.value || 'America/Los_Angeles';
+  localStorage.setItem('kat-timezone', newTz);
   // Save calendar URLs and refresh events if changed
   const oldCalCfg = loadCalUrls();
   const newCalCfg = {
@@ -2548,8 +2567,9 @@ function saveSettings() {
     travelPatterns: (document.getElementById('cal-pat-travel')?.value||'').trim()
   };
   saveCalUrls(newCalCfg);
-  // Re-fetch if URLs changed; just re-render if only patterns changed
-  if (newCalCfg.outlook !== oldCalCfg.outlook || newCalCfg.google !== oldCalCfg.google) {
+  // Re-fetch if URLs changed (floating-time events re-interpret in the new zone);
+  // otherwise just re-render so display shifts to the new timezone.
+  if (newCalCfg.outlook !== oldCalCfg.outlook || newCalCfg.google !== oldCalCfg.google || newTz !== oldTz) {
     fetchAndCacheCalEvents(); // non-blocking
   } else if (newCalCfg.hiddenPatterns !== oldCalCfg.hiddenPatterns ||
              newCalCfg.apptPatterns   !== oldCalCfg.apptPatterns   ||
@@ -2905,17 +2925,73 @@ function loadCalUrls() {
 }
 function saveCalUrls(u) { localStorage.setItem('kat-cal-urls', JSON.stringify(u)); }
 
-function parseIcalDt(val) {
+// ─── Timezone handling ─────────────────────────────────────────
+// iCal times can be UTC (Z), zoned (TZID=...), or floating. We convert every
+// event to a true UTC instant on parse, then DISPLAY it in the user's target
+// timezone (default Pacific, changeable in Settings for travel).
+const WIN_TZ_TO_IANA = {
+  'Pacific Standard Time':'America/Los_Angeles','Pacific Daylight Time':'America/Los_Angeles',
+  'Mountain Standard Time':'America/Denver','US Mountain Standard Time':'America/Phoenix',
+  'Central Standard Time':'America/Chicago','Eastern Standard Time':'America/New_York',
+  'AUS Eastern Standard Time':'Australia/Sydney','AUS Eastern Daylight Time':'Australia/Sydney',
+  'AUS Central Standard Time':'Australia/Adelaide','W. Australia Standard Time':'Australia/Perth',
+  'GMT Standard Time':'Europe/London','Greenwich Standard Time':'Europe/London',
+  'UTC':'UTC','Coordinated Universal Time':'UTC'
+};
+function getTargetTz() { return localStorage.getItem('kat-timezone') || 'America/Los_Angeles'; }
+function ianaFromTzid(tzid) {
+  if (!tzid) return null;
+  if (WIN_TZ_TO_IANA[tzid]) return WIN_TZ_TO_IANA[tzid];
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tzid }); return tzid; } catch(e) { return null; }
+}
+// Wall-clock time in a zone → true UTC instant.
+function zonedWallToUTC(y, mo, d, h, mi, s, iana) {
+  const asUTC = Date.UTC(y, mo-1, d, h, mi, s||0);
+  const p = {};
+  new Intl.DateTimeFormat('en-US', { timeZone: iana, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit', hour12:false })
+    .formatToParts(new Date(asUTC)).forEach(x => p[x.type] = x.value);
+  let hh = +p.hour; if (hh === 24) hh = 0;
+  const zoneAsUTC = Date.UTC(+p.year, +p.month-1, +p.day, hh, +p.minute, +p.second);
+  return new Date(asUTC - (zoneAsUTC - asUTC));
+}
+// Target-zone helpers for matching/placing/displaying events
+function eventDateStr(date) {
+  const p = {};
+  new Intl.DateTimeFormat('en-CA', { timeZone:getTargetTz(), year:'numeric',month:'2-digit',day:'2-digit' })
+    .formatToParts(date).forEach(x => p[x.type] = x.value);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+function eventMins(date) {
+  const p = {};
+  new Intl.DateTimeFormat('en-US', { timeZone:getTargetTz(), hour:'2-digit',minute:'2-digit', hour12:false })
+    .formatToParts(date).forEach(x => p[x.type] = x.value);
+  let h = +p.hour; if (h === 24) h = 0;
+  return h*60 + (+p.minute);
+}
+function eventTimeStr(date) {
+  return date.toLocaleTimeString('en-US', { timeZone:getTargetTz(), hour:'numeric', minute:'2-digit' });
+}
+
+function parseIcalDt(val, tzid) {
+  const hasZ = /Z$/.test(val);
   const clean = val.replace(/Z$/, '');
   if (!/T/.test(clean)) {
-    // All-day: YYYYMMDD
-    const [y,mo,d] = [clean.slice(0,4), clean.slice(4,6), clean.slice(6,8)];
-    return { date: new Date(`${y}-${mo}-${d}T00:00:00`), allDay: true };
+    // All-day: YYYYMMDD → noon UTC (same calendar date in any zone for matching)
+    const [y,mo,d] = [+clean.slice(0,4), +clean.slice(4,6), +clean.slice(6,8)];
+    return { date: new Date(Date.UTC(y, mo-1, d, 12, 0, 0)), allDay: true };
   }
   const [datePart, timePart] = clean.split('T');
-  const [y,mo,d] = [datePart.slice(0,4), datePart.slice(4,6), datePart.slice(6,8)];
-  const [h,mi,s] = [timePart.slice(0,2), timePart.slice(2,4), timePart.slice(4,6)||'00'];
-  return { date: new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`), allDay: false };
+  const y=+datePart.slice(0,4), mo=+datePart.slice(4,6), d=+datePart.slice(6,8);
+  const h=+timePart.slice(0,2), mi=+timePart.slice(2,4), s=+(timePart.slice(4,6)||'0');
+  let date;
+  if (hasZ) {
+    date = new Date(Date.UTC(y, mo-1, d, h, mi, s)); // already UTC
+  } else {
+    // Zoned (TZID) or floating → interpret wall-clock in that zone (floating = target zone)
+    const iana = ianaFromTzid(tzid) || getTargetTz();
+    date = zonedWallToUTC(y, mo, d, h, mi, s, iana);
+  }
+  return { date, allDay: false };
 }
 
 function parseIcal(text) {
@@ -2932,11 +3008,13 @@ function parseIcal(text) {
     if (!inEvent) continue;
     const ci = t.indexOf(':');
     if (ci < 0) continue;
-    const prop = t.slice(0, ci).split(';')[0].toUpperCase();
+    const head = t.slice(0, ci);
+    const prop = head.split(';')[0].toUpperCase();
+    const tzid = (head.match(/TZID=([^:;]+)/) || [])[1] || null;  // named timezone, if any
     const val  = t.slice(ci + 1);
     if (prop === 'SUMMARY') ev.title = val.replace(/\\n/g,' ').replace(/\\[,;]/g, m => m[1]);
-    if (prop === 'DTSTART') { const p = parseIcalDt(val); ev.start = p.date; ev.allDay = p.allDay; }
-    if (prop === 'DTEND')   { const p = parseIcalDt(val); ev.end   = p.date; }
+    if (prop === 'DTSTART') { const p = parseIcalDt(val, tzid); ev.start = p.date; ev.allDay = p.allDay; }
+    if (prop === 'DTEND')   { const p = parseIcalDt(val, tzid); ev.end   = p.date; }
     if (prop === 'STATUS')   ev.status  = val.toUpperCase();
     if (prop === 'CLASS')    ev.cls     = val.toUpperCase();   // PUBLIC, PRIVATE, CONFIDENTIAL
     if (prop === 'TRANSP')   ev.transp  = val.toUpperCase();   // OPAQUE, TRANSPARENT
@@ -2945,7 +3023,7 @@ function parseIcal(text) {
     if (prop === 'RRULE') ev._rrule = val;
     if (prop === 'EXDATE') {
       ev._exdates = ev._exdates || [];
-      val.split(',').forEach(v => { try { ev._exdates.push(localDateStr(parseIcalDt(v).date)); } catch(e){} });
+      val.split(',').forEach(v => { try { ev._exdates.push(eventDateStr(parseIcalDt(v, tzid).date)); } catch(e){} });
     }
   }
   return events.filter(e => e.status !== 'CANCELLED');
@@ -2979,7 +3057,7 @@ function expandRecurringEvents(events) {
     const emit = (occ) => {
       if (occ < rangeStart || occ > rangeEnd) return;
       if (until && occ > until) return;
-      if (exset.has(localDateStr(occ))) return;
+      if (exset.has(eventDateStr(occ))) return;
       out.push({ ...ev, start: new Date(occ), end: new Date(occ.getTime()+durMs), _rrule: null, _exdates: null });
     };
 
@@ -3080,7 +3158,7 @@ function localDateStr(d) {
 function getEventsForDate(dateStr) {
   return (state.calEvents || []).filter(e => {
     const d = e.start instanceof Date ? e.start : (e.start ? new Date(e.start) : null);
-    return d && localDateStr(d) === dateStr;   // compare in LOCAL timezone
+    return d && eventDateStr(d) === dateStr;   // compare in target timezone
   }).map(e => ({ ...e, kind: classifyCalEvent(e) }))
     .sort((a,b) => new Date(a.start) - new Date(b.start));
 }
@@ -3144,7 +3222,7 @@ function renderScheduleTimeline(schedKey, date) {
   const KIND_COLOR = { appointment:'var(--amber)', travel:'#3B82F6', meeting:'#6366f1' };
   calEvs.filter(e => !e.allDay).forEach(e => {
     const d = e.start instanceof Date ? e.start : new Date(e.start);
-    const sm = d.getHours() * 60 + d.getMinutes();
+    const sm = eventMins(d);  // target timezone
     if (sm < startMins || sm >= wrapMins) return;
     const ed = e.end instanceof Date ? e.end : (e.end ? new Date(e.end) : null);
     const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
@@ -3420,7 +3498,7 @@ function buildTodayBlocks(targetDate) {
   const calEvs = getVisibleEventsForDate(dateStr);
   calEvs.filter(e => !e.allDay).forEach(ev => {
     const d = ev.start instanceof Date ? ev.start : new Date(ev.start);
-    const evMins = d.getHours() * 60 + d.getMinutes();
+    const evMins = eventMins(d);  // target timezone
     const ed = ev.end instanceof Date ? ev.end : (ev.end ? new Date(ev.end) : null);
     const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
     meetingObjs.push({
