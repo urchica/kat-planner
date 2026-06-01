@@ -1152,7 +1152,9 @@ let state = {
 // the *currently displayed* values, recomputed by recomputeSprint().
 let sprintState = {
   anchorNum: parseInt(localStorage.getItem('kat-sprint-anchor-num') || localStorage.getItem('kat-sprint-num')) || 1,
-  anchorStart: localStorage.getItem('kat-sprint-anchor-start') || localStorage.getItem('kat-sprint-start') || null,
+  // Default anchor: sprint cadence runs Saturday→Friday, 14 days. The current
+  // sprint starts Sat 2026-05-30 (ends Fri 2026-06-12). Override via "Set dates".
+  anchorStart: localStorage.getItem('kat-sprint-anchor-start') || localStorage.getItem('kat-sprint-start') || '2026-05-30',
   viewOffset: 0,
   num: 1, startDate: null,
   goals: [], projects: [], tasks: [], review: null
