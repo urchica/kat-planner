@@ -3381,11 +3381,16 @@ function buildTodayBlocks(targetDate) {
     let used = 0;
     blk.tasks = [];
     blk._overflowTasks = [];
+    // Add tasks in strict PRIORITY order (prioSort) until the block's time is
+    // full or the shared work-ceiling budget is exhausted. The task that crosses
+    // the time boundary is still placed (deep work can run slightly over), so the
+    // highest-priority tasks always land in this block rather than being bumped
+    // by smaller lower-priority ones.
     for (const t of pool) {
       const m = t.fields['Estimated Minutes'] || DEFAULT_TASK_MINS;
-      const budgetLeft = sharedBudget === 'work' ? Math.min(maxMins - used, workTaskBudget) : (maxMins - used);
-      // Always allow the first task; after that, only add if it fits the budget
-      if (blk.tasks.length > 0 && m > budgetLeft) { blk._overflowTasks.push(t); continue; }
+      const blockFull = used >= maxMins;
+      const overBudget = sharedBudget === 'work' && (workTaskBudget - m < 0);
+      if (blk.tasks.length > 0 && (blockFull || overBudget)) { blk._overflowTasks.push(t); continue; }
       blk.tasks.push(t);
       assignedTaskIds.add(t.id);
       used += m;
