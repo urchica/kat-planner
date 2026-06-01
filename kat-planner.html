@@ -530,6 +530,9 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
               <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
               <option>Admin</option>
             </select>
+            <select class="field-select" id="filter-goal" onchange="renderAllTasks()">
+              <option value="">All projects</option>
+            </select>
             <button class="btn btn-ghost btn-sm" onclick="loadTasks()">↻</button>
           </div>
         </div>
@@ -1311,6 +1314,10 @@ const AT = {
   },
   async getSprintProjects(num) {
     const r = await this.call('GET',`Sprint%20Projects?filterByFormula=${encodeURIComponent(`{Sprint}=${num}`)}`);
+    return r.records||[];
+  },
+  async getAllSprintProjects() {
+    const r = await this.call('GET','Sprint%20Projects?pageSize=100');
     return r.records||[];
   },
   async getSprintTasks(num) {
@@ -2159,11 +2166,15 @@ function currentSprintNum() {
 }
 
 // Convert a Sprint Tasks record into the shape that the task pipeline expects.
+// projectId → goal name, built in loadTasks so tasks can be tagged by goal
+let sprintGoalByProject = {};
 function adaptSprintTask(t) {
   const adapted = { ...t, _isSprint: true, _sprintNum: t.fields.Sprint, fields: { ...t.fields } };
   const hrs = t.fields['Estimated Hours'];
   if (hrs > 0) adapted.fields['Estimated Minutes'] = Math.round(hrs * 60);
   if (t.fields['Due Date']) adapted.fields['Target Date'] = t.fields['Due Date'];
+  const projId = (t.fields.Project || [])[0];
+  adapted._goal = (projId && sprintGoalByProject[projId]) || '';
   return adapted;
 }
 
@@ -2185,10 +2196,16 @@ function mergeSprintTasksIntoState(sprintTasks) {
 async function loadTasks() {
   try {
     const num = currentSprintNum();
-    const [normalTasks, sprintTasks] = await Promise.all([
+    const [normalTasks, sprintTasks, projects, goals] = await Promise.all([
       AT.getTasks(),
-      num ? AT.getSprintTasksUpTo(num).catch(()=>[]) : Promise.resolve([])  // current + past sprints
+      num ? AT.getSprintTasksUpTo(num).catch(()=>[]) : Promise.resolve([]),  // current + past sprints
+      AT.getAllSprintProjects().catch(()=>[]),
+      AT.getSprintGoals().catch(()=>[])
     ]);
+    // Build projectId → goal-name map so each sprint task can be tagged by goal
+    const goalName = {}; goals.forEach(g => goalName[g.id] = g.fields.Name || '');
+    sprintGoalByProject = {};
+    projects.forEach(p => { sprintGoalByProject[p.id] = goalName[(p.fields.Goal||[])[0]] || p.fields.Name || ''; });
     const katSprint = sprintTasks.filter(t=>(t.fields.Owner||[]).includes('Kat'));
     state.tasks = [...normalTasks, ...katSprint.map(adaptSprintTask)];
     refreshPredictions();
@@ -2273,14 +2290,23 @@ function renderTodayTasks() {
 }
 
 function renderAllTasks() {
+  // Populate the project/goal filter from the goals present on sprint tasks
+  const goalSel = document.getElementById('filter-goal');
+  if (goalSel) {
+    const goals = [...new Set(state.tasks.filter(t=>t._goal).map(t=>t._goal))].sort();
+    const cur = goalSel.value;
+    goalSel.innerHTML = '<option value="">All projects</option>' + goals.map(g=>`<option${g===cur?' selected':''}>${esc(g)}</option>`).join('');
+  }
   const statusF = document.getElementById('filter-status')?.value||'';
   const areaF = document.getElementById('filter-area')?.value||'';
+  const goalF = goalSel?.value||'';
   let tasks = [...state.tasks];
   if (statusF) tasks = tasks.filter(t=>t.fields.Status===statusF);
   if (areaF) tasks = tasks.filter(t => {
     const a=t.fields.Area; if(!a) return false;
     return Array.isArray(a)?a.includes(areaF):a===areaF;
   });
+  if (goalF) tasks = tasks.filter(t => t._goal === goalF);
   document.getElementById('all-task-count').textContent = tasks.length+' tasks';
   const el = document.getElementById('all-tasks-list');
   if (!tasks.length) { el.innerHTML='<div class="no-tasks">No tasks match.</div>'; return; }
@@ -2373,6 +2399,7 @@ function renderTaskRow(t, ctx) {
       <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
       <div class="task-meta">
         ${isSprint?`<span class="task-pill" style="background:${t._sprintNum===currentSprintNum()?'var(--teal)':'var(--gray-mid)'};color:white;font-size:10px">🎯 S${t._sprintNum||'?'}${t._sprintNum===currentSprintNum()?' · now':''}</span>`:''}
+        ${isSprint&&t._goal?`<span class="task-pill" style="background:var(--purple-light,#EEEDFE);color:#3C3489;font-size:10px">${esc(t._goal)}</span>`:''}
         ${areas?`<span class="task-pill tp-area">${esc(areas)}</span>`:''}
         ${q?`<span class="task-pill ${qcls}">${PRIO_LABEL[q]||q.split(' ')[0]}</span>`:''}
         ${minsDisplay?`<span class="task-pill tp-time">⏱ ${minsDisplay}</span>`:''}
@@ -3316,181 +3343,109 @@ function buildTodayBlocks(targetDate) {
   const day = SCHEDULE.days[schedKey];
   if (!day) return [];
 
-  let cursor = timeToMins(day.start || '06:30');
+  const dayStart = timeToMins(day.start || '06:30');
   const wrapEndMins = timeToMins(day.wrapEnd || '17:30');
   const blocks = [];
 
-  // ── Zone-anchored day structure ──────────────────────────────────
-  // Morning Zone: Business deep work → breakfast → 30m email → Work deep work
-  // Midday Zone (anchored ≥ exerciseEarliest): Exercise → Lunch & Learn
-  // Afternoon Zone: lighter work + meetings → Australia email → Close-down
   const totalEmailMins   = day.emailMins ?? 60;
-  const emailMorningMins  = Math.min(ds.emailMorningMin || 30, totalEmailMins); // ≥30m before deep work
+  const emailMorningMins  = Math.min(ds.emailMorningMin || 30, totalEmailMins);
   const emailAfternoonMins = Math.max(0, totalEmailMins - emailMorningMins);
   const exerciseFloor = timeToMins(ds.exerciseEarliest || '11:00');
   const deepWorkMins  = Math.round((ds.workDeepHours || 2) * 60);
-
-  // 1. Business deep work (first thing)
   const bizMins = Math.round(ds.bizMorningHours * 60);
-  if (bizMins > 0) {
-    blocks.push({
-      id: 'biz-morning', type: 'work-block',
-      label: 'Business — deep work', icon: '🐕', color: 'var(--teal-dark)',
-      startMins: cursor, durationMins: bizMins,
-      tasks: [], calEvents: [], nudge: 'Top business priority first', noteKey: null
-    });
-    cursor += bizMins;
-  }
-
-  // 2. Breakfast (short screen-break)
-  if (ds.breakfastMins > 0) {
-    blocks.push({
-      id: 'breakfast', type: 'meal',
-      label: 'Breakfast', icon: '🍳', color: '#F59E0B',
-      startMins: cursor, durationMins: ds.breakfastMins,
-      tasks: [], calEvents: [], nudge: '🚫 Away from screen', noteKey: null
-    });
-    cursor += ds.breakfastMins;
-  }
-
-  // 3. Morning email check (≥30m, before the work deep-work block)
-  if (emailMorningMins > 0) {
-    blocks.push({
-      id: 'email-morning', type: 'email',
-      label: 'Email check', icon: '📧', color: 'var(--teal)',
-      startMins: cursor, durationMins: emailMorningMins,
-      tasks: [], calEvents: [],
-      nudge: 'Quick inbox sweep — then into deep work', noteKey: null
-    });
-    cursor += emailMorningMins;
-  }
-
-  // 4. Work deep work (target ~2h; extend to reach the exercise anchor if morning runs ahead)
-  if (day.work > 0) {
-    const workDeepDur = Math.max(deepWorkMins, exerciseFloor - cursor);
-    blocks.push({
-      id: 'work-deep', type: 'work-block',
-      label: 'Work — deep work', icon: '⚡', color: 'var(--teal)',
-      startMins: cursor, durationMins: workDeepDur,
-      tasks: [], calEvents: [], nudge: 'Deep / Q1 work — protect this block', noteKey: null
-    });
-    cursor += workDeepDur;
-  }
-
-  // 5. Exercise — midday anchor (starts no earlier than exerciseEarliest, ~11am)
   const exerciseMins = Math.round((day.exercise || 0) * 60);
-  if (exerciseMins > 0) {
-    if (cursor < exerciseFloor) cursor = exerciseFloor;
-    blocks.push({
-      id: 'exercise', type: 'work-block',
-      label: 'Exercise', icon: '🏃', color: 'var(--purple)',
-      startMins: cursor, durationMins: exerciseMins,
-      tasks: [], calEvents: [], nudge: 'Move your body — protected midday time', noteKey: null
-    });
-    cursor += exerciseMins;
-  }
 
-  // 6. Lunch & Learn (after exercise)
-  if (ds.lunchLearnMins > 0) {
-    blocks.push({
-      id: 'lunch-learn', type: 'meal',
-      label: 'Lunch & Learn', icon: '🍽️', color: 'var(--purple)',
-      startMins: cursor, durationMins: ds.lunchLearnMins,
-      tasks: [], calEvents: [],
-      nudge: ds.lunchLearnGoal || '🎓 Eat away from desk · learn something',
-      noteKey: 'lunch-learn'
-    });
-    cursor += ds.lunchLearnMins;
-  }
-
-  // 7. Afternoon — lighter work + meetings (fills until Australia email + close-down)
-  const afternoonEnd = wrapEndMins - ds.bufferMins - emailAfternoonMins;
-  const afternoonMins = afternoonEnd - cursor;
-  if (afternoonMins > 5) {
-    blocks.push({
-      id: 'afternoon', type: 'work-block',
-      label: 'Afternoon — lighter work', icon: '📋', color: 'var(--amber)',
-      startMins: cursor, durationMins: afternoonMins,
-      tasks: [], calEvents: [], nudge: 'Lighter work · meetings · admin', noteKey: null
-    });
-    cursor = afternoonEnd;
-  } else {
-    cursor = Math.max(cursor, afternoonEnd);
-  }
-
-  // 8. Australia email (afternoon zone, before close-down)
-  if (emailAfternoonMins > 0) {
-    blocks.push({
-      id: 'email-afternoon', type: 'email',
-      label: 'Australia email', icon: '📧', color: 'var(--amber)',
-      startMins: cursor, durationMins: emailAfternoonMins,
-      tasks: [], calEvents: [],
-      nudge: 'Australia inbox · urgent items only', noteKey: null
-    });
-    cursor += emailAfternoonMins;
-  }
-
-  // 9. Close-down buffer
-  if (ds.bufferMins > 0) {
-    blocks.push({
-      id: 'closedown', type: 'buffer',
-      label: 'Close-down', icon: '💭', color: 'var(--coral)',
-      startMins: cursor, durationMins: ds.bufferMins,
-      tasks: [], calEvents: [],
-      nudge: 'Wrap up · plan tomorrow · close down fully', noteKey: null
-    });
-    cursor += ds.bufferMins;
-  }
-
-  // 10. Wrap marker (anchored to the day's wrap time, or later if the day overflowed)
-  blocks.push({
-    id: 'wrap', type: 'wrap',
-    label: 'Wrap', icon: '🏁', color: 'var(--gray)',
-    startMins: Math.max(wrapEndMins, cursor), durationMins: 0,
-    tasks: [], calEvents: [], nudge: '', noteKey: null
-  });
-
-  // ── Gather meetings FIRST so their time reduces each block's task capacity ──
+  // ── Meetings are FIXED reservations; every other block flows around them ──
   const KIND_ICON  = { appointment:'📅', travel:'✈️', meeting:'👥', standing:'👥', custom:'📌' };
   const KIND_COLOR = { appointment:'var(--amber)', travel:'#3B82F6', meeting:'#6366f1', standing:'#7C5CFC', custom:'#6366f1' };
-  const meetingObjs = [];
+  const meetings = [];
   const calEvs = getVisibleEventsForDate(dateStr);
   calEvs.filter(e => !e.allDay).forEach(ev => {
     const d = ev.start instanceof Date ? ev.start : new Date(ev.start);
-    const evMins = eventMins(d);  // target timezone
+    const sm = eventMins(d);
     const ed = ev.end instanceof Date ? ev.end : (ev.end ? new Date(ev.end) : null);
     const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
-    meetingObjs.push({ startMins: evMins, durationMins: dur, title: ev.title || 'Event',
-      icon: KIND_ICON[ev.kind] || '📅', color: KIND_COLOR[ev.kind] || '#6366f1', kind: ev.kind });
+    meetings.push({ id:'mtg', type:'meeting', startMins: sm, durationMins: dur,
+      label: ev.title || 'Event', icon: KIND_ICON[ev.kind]||'📅', color: KIND_COLOR[ev.kind]||'#6366f1',
+      kind: ev.kind, tasks:[], calEvents:[], nudge:'', noteKey:null });
   });
   if (isToday) {
     (state.customMeetings || []).forEach(m => {
       const p = parseMeetingTimeStr(m.time); if (!p) return;
-      meetingObjs.push({ startMins: p.startMins, durationMins: p.durMins, title: m.name,
-        icon: '📌', color: KIND_COLOR.custom, kind: 'custom' });
+      meetings.push({ id:'mtg', type:'meeting', startMins: p.startMins, durationMins: p.durMins,
+        label: m.name, icon:'📌', color: KIND_COLOR.custom, kind:'custom', tasks:[], calEvents:[], nudge:'', noteKey:null });
     });
   }
-  meetingObjs.forEach(calObj => {
-    let assigned = false;
-    for (const blk of blocks) {
-      if (blk.type === 'wrap') continue;
-      if (calObj.startMins >= blk.startMins && calObj.startMins < blk.startMins + blk.durationMins) {
-        blk.calEvents.push(calObj); assigned = true; break;
-      }
-    }
-    if (!assigned) {
-      const before = blocks.filter(b => b.type !== 'wrap' && b.startMins <= calObj.startMins);
-      const target = before.length ? before[before.length-1] : blocks.find(b => b.type !== 'wrap');
-      if (target) target.calEvents.push(calObj);
-    }
-  });
-  blocks.forEach(b => b.calEvents && b.calEvents.sort((x,y) => x.startMins - y.startMins));
+  meetings.sort((a,b) => a.startMins - b.startMins);
+  const busy = meetings.map(m => ({ s:m.startMins, e:m.startMins + m.durationMins }));
 
-  // ── Place tasks across blocks in priority order ──────────────────
-  // Each block's task capacity = its duration MINUS any meeting time inside it
-  // (so a block never plans meetings AND a full block of tasks at once). Tasks
-  // are placed in strict priority order; a task that doesn't fit the current
-  // block flows forward to the next compatible block that has room (no overfill).
+  // reserve(dur): next meeting-free slot of length `dur` at/after the cursor.
+  let cursor = dayStart;
+  function reserve(dur) {
+    if (dur <= 0) return cursor;
+    let start = cursor;
+    for (let i = 0; i < 60; i++) {
+      const clash = busy.find(b => b.s < start + dur && b.e > start);
+      if (!clash) break;
+      start = clash.e;        // jump past the meeting
+    }
+    cursor = start + dur;
+    return start;
+  }
+  const add = (o) => { o.startMins = reserve(o.durationMins); blocks.push(o); };
+
+  // 1. Business deep work
+  if (bizMins > 0) add({ id:'biz-morning', type:'work-block', label:'Business — deep work', icon:'🐕',
+    color:'var(--teal-dark)', durationMins:bizMins, tasks:[], calEvents:[], nudge:'Top business priority first', noteKey:null });
+  // 2. Breakfast
+  if (ds.breakfastMins > 0) add({ id:'breakfast', type:'meal', label:'Breakfast', icon:'🍳',
+    color:'#F59E0B', durationMins:ds.breakfastMins, tasks:[], calEvents:[], nudge:'🚫 Away from screen', noteKey:null });
+  // 3. Morning email check
+  if (emailMorningMins > 0) add({ id:'email-morning', type:'email', label:'Email check', icon:'📧',
+    color:'var(--teal)', durationMins:emailMorningMins, tasks:[], calEvents:[], nudge:'Quick inbox sweep — then into deep work', noteKey:null });
+  // 4. Work deep work (extend toward the exercise anchor if the morning is ahead)
+  if (day.work > 0) {
+    const workDeepDur = Math.max(deepWorkMins, exerciseFloor - cursor);
+    add({ id:'work-deep', type:'work-block', label:'Work — deep work', icon:'⚡', color:'var(--teal)',
+      durationMins:workDeepDur, tasks:[], calEvents:[], nudge:'Deep / Q1 work — protect this block', noteKey:null });
+  }
+  // 5. Exercise — midday anchor (no earlier than exerciseEarliest)
+  if (exerciseMins > 0) {
+    if (cursor < exerciseFloor) cursor = exerciseFloor;
+    add({ id:'exercise', type:'work-block', label:'Exercise', icon:'🏃', color:'var(--purple)',
+      durationMins:exerciseMins, tasks:[], calEvents:[], nudge:'Move your body — protected midday time', noteKey:null });
+  }
+  // 6. Lunch & Learn
+  if (ds.lunchLearnMins > 0) add({ id:'lunch-learn', type:'meal', label:'Lunch & Learn', icon:'🍽️',
+    color:'var(--purple)', durationMins:ds.lunchLearnMins, tasks:[], calEvents:[],
+    nudge: ds.lunchLearnGoal || '🎓 Eat away from desk · learn something', noteKey:'lunch-learn' });
+  // 7. Afternoon — lighter work (fills the free time before the Australia email + close-down)
+  const afternoonEnd = wrapEndMins - ds.bufferMins - emailAfternoonMins;
+  const afternoonMins = afternoonEnd - cursor;   // nominal; reserve() flows it around meetings
+  if (afternoonMins > 5) add({ id:'afternoon', type:'work-block', label:'Afternoon — lighter work', icon:'📋',
+    color:'var(--amber)', durationMins:afternoonMins, tasks:[], calEvents:[], nudge:'Lighter work · admin', noteKey:null });
+  // 8. Australia email
+  if (emailAfternoonMins > 0) add({ id:'email-afternoon', type:'email', label:'Australia email', icon:'📧',
+    color:'var(--amber)', durationMins:emailAfternoonMins, tasks:[], calEvents:[], nudge:'Australia inbox · urgent items only', noteKey:null });
+  // 9. Close-down
+  if (ds.bufferMins > 0) add({ id:'closedown', type:'buffer', label:'Close-down', icon:'💭', color:'var(--coral)',
+    durationMins:ds.bufferMins, tasks:[], calEvents:[], nudge:'Wrap up · plan tomorrow · close down fully', noteKey:null });
+
+  // Meetings join the timeline as their own rows
+  blocks.push(...meetings);
+
+  // 10. Wrap (after the last thing on the timeline)
+  const lastEnd = Math.max(wrapEndMins, ...blocks.map(b => b.startMins + b.durationMins));
+  blocks.push({ id:'wrap', type:'wrap', label:'Wrap', icon:'🏁', color:'var(--gray)',
+    startMins: lastEnd, durationMins:0, tasks:[], calEvents:[], nudge:'', noteKey:null });
+
+  // Sort all blocks (flexible + meetings) into time order
+  blocks.sort((a,b) => a.startMins - b.startMins);
+
+  // ── Place tasks across work blocks in priority order ──────────────
+  // Blocks are meeting-free (laid around meetings), so each block's full
+  // duration is task capacity. A task that doesn't fit the current block flows
+  // forward to the next compatible block; no block is ever overfilled.
   const todayTasks = getTasksForDate(dateStr, isToday);
   const DEFAULT_TASK_MINS = 30;
   let workTaskBudget = Math.max(0, Math.round((day.work || 0) * 60) - totalEmailMins);
@@ -3500,11 +3455,9 @@ function buildTodayBlocks(targetDate) {
     'exercise':    ['Health & Fitness'],
     'afternoon':   ['Work Work', '__unassigned__', 'Admin']
   };
-  const workBlocks = blocks.filter(b => b.type === 'work-block' && blockAreas[b.id]); // time order
+  const workBlocks = blocks.filter(b => b.type === 'work-block' && blockAreas[b.id]);
   workBlocks.forEach(b => {
-    const meetingMins = (b.calEvents || []).reduce((s,e) => s + e.durationMins, 0);
-    b._capacity = Math.max(0, b.durationMins - meetingMins);
-    b._meetingMins = meetingMins;
+    b._capacity = b.durationMins; b._meetingMins = 0;
     b._used = 0; b.tasks = []; b._overflowTasks = [];
     b._isWorkArea = (b.id === 'work-deep' || b.id === 'afternoon');
   });
@@ -3519,7 +3472,7 @@ function buildTodayBlocks(targetDate) {
       blockAreas[b.id].includes(a) || (blockAreas[b.id].includes('__unassigned__') && !a));
     if (!compatible.length) continue;
     let placed = false;
-    for (const b of compatible) {            // first time-ordered block with room
+    for (const b of compatible) {
       const fitsTime   = b._used + m <= b._capacity;
       const fitsBudget = !b._isWorkArea || (workTaskBudget - m >= 0);
       if (fitsTime && fitsBudget) {
@@ -3528,7 +3481,7 @@ function buildTodayBlocks(targetDate) {
         placed = true; break;
       }
     }
-    if (!placed) compatible[0]._overflowTasks.push(t); // no room today → swap-in backlog
+    if (!placed) compatible[0]._overflowTasks.push(t);
   }
   workBlocks.forEach(b => { b._fillMins = b._used; b._extraTasks = b._overflowTasks.length; });
 
@@ -3581,6 +3534,16 @@ function renderUnifiedSchedule(targetDate) {
       html += `<div class="uday-wrap">
         <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
         <span>🏁 Wrap</span>
+      </div>`;
+      continue;
+    }
+
+    if (blk.type === 'meeting') {
+      const endStr = minsToTime(blk.startMins + blk.durationMins);
+      html += `<div class="uday-cal" style="border-left:3px solid ${blk.color};background:${blk.color}11;border-radius:0 6px 6px 0;padding:6px 8px;margin-bottom:6px">
+        <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
+        <span style="color:${blk.color};font-weight:600">${blk.icon} ${esc(blk.label)}</span>
+        <span class="uday-blk-dur">${minsToTime(blk.startMins)}–${endStr}</span>
       </div>`;
       continue;
     }
@@ -3690,14 +3653,10 @@ function renderUnifiedSchedule(targetDate) {
         tasksHtml = `<div class="text-sm text-gray" style="padding:3px 6px;font-style:italic">No tasks queued for this block</div>`;
       }
 
-      // Fill indicator: queued task time vs the block's CAPACITY (duration minus
-      // any meeting time inside it), so meetings + tasks aren't double-counted.
+      // Fill indicator: queued task time vs the block's duration (blocks are
+      // meeting-free — meetings are shown as their own rows).
       const fillMins = blk._fillMins || 0;
-      const cap = blk._capacity != null ? blk._capacity : blk.durationMins;
-      const meetMins = blk._meetingMins || 0;
-      const fillStr = (fillMins > 0 || meetMins > 0)
-        ? `${fh(fillMins)} of ${fh(cap)} free${meetMins > 0 ? ` · ${fh(meetMins)} mtg` : ''}`
-        : '';
+      const fillStr = fillMins > 0 ? `${fh(fillMins)} of ${fh(blk.durationMins)} queued` : '';
 
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
         <div class="uday-blk-hdr">
