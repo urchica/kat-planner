@@ -1317,6 +1317,11 @@ const AT = {
     const r = await this.call('GET',`Sprint%20Tasks?filterByFormula=${encodeURIComponent(`{Sprint}=${num}`)}&sort[0][field]=Owner`);
     return r.records||[];
   },
+  async getSprintTasksUpTo(num) {
+    // Current + all past sprints (≤ num), so past sprints are reviewable
+    const r = await this.call('GET',`Sprint%20Tasks?filterByFormula=${encodeURIComponent(`{Sprint}<=${num}`)}&sort[0][field]=Sprint`);
+    return r.records||[];
+  },
   async getSprintReview(num) {
     const r = await this.call('GET',`Sprint%20Reviews?filterByFormula=${encodeURIComponent(`{Sprint}=${num}`)}`);
     return r.records?.[0]||null;
@@ -2155,16 +2160,18 @@ function currentSprintNum() {
 
 // Convert a Sprint Tasks record into the shape that the task pipeline expects.
 function adaptSprintTask(t) {
-  const adapted = { ...t, _isSprint: true, fields: { ...t.fields } };
+  const adapted = { ...t, _isSprint: true, _sprintNum: t.fields.Sprint, fields: { ...t.fields } };
   const hrs = t.fields['Estimated Hours'];
   if (hrs > 0) adapted.fields['Estimated Minutes'] = Math.round(hrs * 60);
   if (t.fields['Due Date']) adapted.fields['Target Date'] = t.fields['Due Date'];
   return adapted;
 }
 
-// Replace sprint tasks in state.tasks with a fresh batch, then re-render.
+// Refresh the CURRENT sprint's tasks in state.tasks (preserving past-sprint
+// tasks that were loaded for review), then re-render.
 function mergeSprintTasksIntoState(sprintTasks) {
-  state.tasks = state.tasks.filter(t => !t._isSprint);
+  const curNum = currentSprintNum();
+  state.tasks = state.tasks.filter(t => !t._isSprint || t._sprintNum !== curNum);
   const katTasks = sprintTasks.filter(t => (t.fields.Owner||[]).includes('Kat'));
   state.tasks.push(...katTasks.map(adaptSprintTask));
   refreshPredictions();
@@ -2180,7 +2187,7 @@ async function loadTasks() {
     const num = currentSprintNum();
     const [normalTasks, sprintTasks] = await Promise.all([
       AT.getTasks(),
-      num ? AT.getSprintTasks(num).catch(()=>[]) : Promise.resolve([])
+      num ? AT.getSprintTasksUpTo(num).catch(()=>[]) : Promise.resolve([])  // current + past sprints
     ]);
     const katSprint = sprintTasks.filter(t=>(t.fields.Owner||[]).includes('Kat'));
     state.tasks = [...normalTasks, ...katSprint.map(adaptSprintTask)];
@@ -2194,9 +2201,10 @@ async function loadTasks() {
 
 function getTasksForDate(dateStr, isToday) {
   const todayOrFuture = dateStr >= state.dayKey;
+  const curNum = currentSprintNum();
   return state.tasks.filter(t => {
     if (t.fields.Status==='Done'||t.fields.Status==='Deferred') return false;
-    if (t._isSprint) return true;   // always surface current-sprint commitments
+    if (t._isSprint) return t._sprintNum === curNum;  // only the CURRENT sprint flows into the day
     const td = t.fields['Target Date'];
     if (td) return td <= dateStr;   // dated: show on/after due (overdue rolls forward)
     return todayOrFuture;           // undated backlog: eligible to schedule today + future
@@ -2364,7 +2372,7 @@ function renderTaskRow(t, ctx) {
     <div class="task-body" onclick="openEditTask('${t.id}')" style="cursor:pointer">
       <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
       <div class="task-meta">
-        ${isSprint?`<span class="task-pill" style="background:var(--teal);color:white;font-size:10px">🎯 Sprint</span>`:''}
+        ${isSprint?`<span class="task-pill" style="background:${t._sprintNum===currentSprintNum()?'var(--teal)':'var(--gray-mid)'};color:white;font-size:10px">🎯 S${t._sprintNum||'?'}${t._sprintNum===currentSprintNum()?' · now':''}</span>`:''}
         ${areas?`<span class="task-pill tp-area">${esc(areas)}</span>`:''}
         ${q?`<span class="task-pill ${qcls}">${PRIO_LABEL[q]||q.split(' ')[0]}</span>`:''}
         ${minsDisplay?`<span class="task-pill tp-time">⏱ ${minsDisplay}</span>`:''}
@@ -2859,9 +2867,11 @@ function computeSprintCapacity() {
   const end = currentSprintEndDate();
   if (!end) return null;
 
-  // Remaining work = all incomplete Kat sprint tasks in state.tasks
+  // Remaining work = incomplete Kat sprint tasks in the CURRENT sprint only
+  // (past-sprint tasks are now also loaded for review, so exclude them here)
+  const curNum = currentSprintNum();
   const remainingTasks = state.tasks.filter(t =>
-    t._isSprint && t.fields.Status !== 'Done' && t.fields.Status !== 'Deferred'
+    t._isSprint && t._sprintNum === curNum && t.fields.Status !== 'Done' && t.fields.Status !== 'Deferred'
   );
   const remainingMins = remainingTasks.reduce((s, t) => s + (t.fields['Estimated Minutes'] || 0), 0);
   const unestimated = remainingTasks.filter(t => !t.fields['Estimated Minutes']).length;
