@@ -3440,112 +3440,89 @@ function buildTodayBlocks(targetDate) {
     tasks: [], calEvents: [], nudge: '', noteKey: null
   });
 
-  // Assign tasks to blocks — FILL each block up to its available minutes,
-  // pulling from the prioritised backlog, and cap total Work Work task-minutes
-  // at the day's work ceiling (which already includes email time).
-  const todayTasks = getTasksForDate(dateStr, isToday);
-  const assignedTaskIds = new Set();
-  const DEFAULT_TASK_MINS = 30; // assume 30m for unestimated tasks when filling
-
-  // Work Work task budget = work ceiling − email time already spent in email blocks.
-  let workTaskBudget = Math.max(0, Math.round((day.work || 0) * 60) - totalEmailMins);
-
-  // Fill blk with tasks matching `areas`, up to `maxMins`. If `sharedBudget` is
-  // 'work', also draw down workTaskBudget. Overflow tasks are recorded for swapping.
-  function fillBlock(blk, areas, maxMins, sharedBudget) {
-    const pool = todayTasks.filter(t => {
-      if (assignedTaskIds.has(t.id)) return false;
-      const a = Array.isArray(t.fields.Area) ? t.fields.Area[0] : (t.fields.Area || '');
-      return areas.includes(a) || (areas.includes('__unassigned__') && !a);
-    }).sort(prioSort);
-
-    let used = 0;
-    blk.tasks = [];
-    blk._overflowTasks = [];
-    // Add tasks in strict PRIORITY order (prioSort) until the block's time is
-    // full or the shared work-ceiling budget is exhausted. The task that crosses
-    // the time boundary is still placed (deep work can run slightly over), so the
-    // highest-priority tasks always land in this block rather than being bumped
-    // by smaller lower-priority ones.
-    for (const t of pool) {
-      const m = t.fields['Estimated Minutes'] || DEFAULT_TASK_MINS;
-      const blockFull = used >= maxMins;
-      const overBudget = sharedBudget === 'work' && (workTaskBudget - m < 0);
-      if (blk.tasks.length > 0 && (blockFull || overBudget)) { blk._overflowTasks.push(t); continue; }
-      blk.tasks.push(t);
-      assignedTaskIds.add(t.id);
-      used += m;
-      if (sharedBudget === 'work') workTaskBudget -= m;
-    }
-    blk._fillMins = used;
-    blk._extraTasks = blk._overflowTasks.length;
-  }
-
-  for (const blk of blocks) {
-    if (blk.type !== 'work-block') continue;
-    if (blk.id === 'biz-morning')      fillBlock(blk, ['Business'], blk.durationMins);
-    else if (blk.id === 'work-deep')   fillBlock(blk, ['Work Work', '__unassigned__'], blk.durationMins, 'work');
-    else if (blk.id === 'exercise')    fillBlock(blk, ['Health & Fitness'], blk.durationMins);
-    else if (blk.id === 'afternoon')   fillBlock(blk, ['Work Work', '__unassigned__', 'Admin'], blk.durationMins, 'work');
-  }
-
-  // ── Gather all meetings for this date: calendar (iCal) + standing + custom ──
+  // ── Gather meetings FIRST so their time reduces each block's task capacity ──
   const KIND_ICON  = { appointment:'📅', travel:'✈️', meeting:'👥', standing:'👥', custom:'📌' };
   const KIND_COLOR = { appointment:'var(--amber)', travel:'#3B82F6', meeting:'#6366f1', standing:'#7C5CFC', custom:'#6366f1' };
   const meetingObjs = [];
-
-  // 1. Calendar (iCal) events
   const calEvs = getVisibleEventsForDate(dateStr);
   calEvs.filter(e => !e.allDay).forEach(ev => {
     const d = ev.start instanceof Date ? ev.start : new Date(ev.start);
     const evMins = eventMins(d);  // target timezone
     const ed = ev.end instanceof Date ? ev.end : (ev.end ? new Date(ev.end) : null);
     const dur = ed ? Math.max(15, Math.round((ed - d) / 60000)) : 30;
-    meetingObjs.push({
-      startMins: evMins, durationMins: dur, title: ev.title || 'Event',
-      icon: KIND_ICON[ev.kind] || '📅', color: KIND_COLOR[ev.kind] || '#6366f1', kind: ev.kind
-    });
+    meetingObjs.push({ startMins: evMins, durationMins: dur, title: ev.title || 'Event',
+      icon: KIND_ICON[ev.kind] || '📅', color: KIND_COLOR[ev.kind] || '#6366f1', kind: ev.kind });
   });
-
-  // (Standing meetings removed — the connected calendar is the source of truth.)
-
-  // 3. Custom meetings (today only)
   if (isToday) {
     (state.customMeetings || []).forEach(m => {
-      const p = parseMeetingTimeStr(m.time);
-      if (!p) return;
-      meetingObjs.push({
-        startMins: p.startMins, durationMins: p.durMins, title: m.name,
-        icon: '📌', color: KIND_COLOR.custom, kind: 'custom'
-      });
+      const p = parseMeetingTimeStr(m.time); if (!p) return;
+      meetingObjs.push({ startMins: p.startMins, durationMins: p.durMins, title: m.name,
+        icon: '📌', color: KIND_COLOR.custom, kind: 'custom' });
     });
   }
-
-  // Assign each meeting to the block whose time window contains its start
   meetingObjs.forEach(calObj => {
     let assigned = false;
     for (const blk of blocks) {
       if (blk.type === 'wrap') continue;
       if (calObj.startMins >= blk.startMins && calObj.startMins < blk.startMins + blk.durationMins) {
-        blk.calEvents.push(calObj);
-        assigned = true;
-        break;
+        blk.calEvents.push(calObj); assigned = true; break;
       }
     }
     if (!assigned) {
-      // Outside all blocks — attach to nearest block before it (or first block)
       const before = blocks.filter(b => b.type !== 'wrap' && b.startMins <= calObj.startMins);
       const target = before.length ? before[before.length-1] : blocks.find(b => b.type !== 'wrap');
       if (target) target.calEvents.push(calObj);
     }
   });
-
-  // Sort each block's events by start time
   blocks.forEach(b => b.calEvents && b.calEvents.sort((x,y) => x.startMins - y.startMins));
 
-  // Store all-day events separately
-  blocks._allDay = calEvs.filter(e => e.allDay);
+  // ── Place tasks across blocks in priority order ──────────────────
+  // Each block's task capacity = its duration MINUS any meeting time inside it
+  // (so a block never plans meetings AND a full block of tasks at once). Tasks
+  // are placed in strict priority order; a task that doesn't fit the current
+  // block flows forward to the next compatible block that has room (no overfill).
+  const todayTasks = getTasksForDate(dateStr, isToday);
+  const DEFAULT_TASK_MINS = 30;
+  let workTaskBudget = Math.max(0, Math.round((day.work || 0) * 60) - totalEmailMins);
+  const blockAreas = {
+    'biz-morning': ['Business'],
+    'work-deep':   ['Work Work', '__unassigned__'],
+    'exercise':    ['Health & Fitness'],
+    'afternoon':   ['Work Work', '__unassigned__', 'Admin']
+  };
+  const workBlocks = blocks.filter(b => b.type === 'work-block' && blockAreas[b.id]); // time order
+  workBlocks.forEach(b => {
+    const meetingMins = (b.calEvents || []).reduce((s,e) => s + e.durationMins, 0);
+    b._capacity = Math.max(0, b.durationMins - meetingMins);
+    b._meetingMins = meetingMins;
+    b._used = 0; b.tasks = []; b._overflowTasks = [];
+    b._isWorkArea = (b.id === 'work-deep' || b.id === 'afternoon');
+  });
 
+  const sortedTasks = todayTasks.slice().sort(prioSort);
+  const assignedTaskIds = new Set();
+  for (const t of sortedTasks) {
+    if (assignedTaskIds.has(t.id)) continue;
+    const a = Array.isArray(t.fields.Area) ? t.fields.Area[0] : (t.fields.Area || '');
+    const m = t.fields['Estimated Minutes'] || DEFAULT_TASK_MINS;
+    const compatible = workBlocks.filter(b =>
+      blockAreas[b.id].includes(a) || (blockAreas[b.id].includes('__unassigned__') && !a));
+    if (!compatible.length) continue;
+    let placed = false;
+    for (const b of compatible) {            // first time-ordered block with room
+      const fitsTime   = b._used + m <= b._capacity;
+      const fitsBudget = !b._isWorkArea || (workTaskBudget - m >= 0);
+      if (fitsTime && fitsBudget) {
+        b.tasks.push(t); b._used += m; assignedTaskIds.add(t.id);
+        if (b._isWorkArea) workTaskBudget -= m;
+        placed = true; break;
+      }
+    }
+    if (!placed) compatible[0]._overflowTasks.push(t); // no room today → swap-in backlog
+  }
+  workBlocks.forEach(b => { b._fillMins = b._used; b._extraTasks = b._overflowTasks.length; });
+
+  blocks._allDay = calEvs.filter(e => e.allDay);
   return blocks;
 }
 
@@ -3703,9 +3680,14 @@ function renderUnifiedSchedule(targetDate) {
         tasksHtml = `<div class="text-sm text-gray" style="padding:3px 6px;font-style:italic">No tasks queued for this block</div>`;
       }
 
-      // Fill indicator: how much of the block's time is queued
+      // Fill indicator: queued task time vs the block's CAPACITY (duration minus
+      // any meeting time inside it), so meetings + tasks aren't double-counted.
       const fillMins = blk._fillMins || 0;
-      const fillStr = fillMins > 0 ? `${fh(fillMins)} of ${fh(blk.durationMins)} queued` : '';
+      const cap = blk._capacity != null ? blk._capacity : blk.durationMins;
+      const meetMins = blk._meetingMins || 0;
+      const fillStr = (fillMins > 0 || meetMins > 0)
+        ? `${fh(fillMins)} of ${fh(cap)} free${meetMins > 0 ? ` · ${fh(meetMins)} mtg` : ''}`
+        : '';
 
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
         <div class="uday-blk-hdr">
