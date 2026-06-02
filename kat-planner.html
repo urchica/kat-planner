@@ -1106,6 +1106,10 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <option>Todo</option><option>Done</option><option>Deferred</option>
         </select>
       </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:4px">
+        <input type="checkbox" id="edit-task-deep" style="width:16px;height:16px"/>
+        <span>⚡ Deep work — schedule into the morning deep-work blocks first</span>
+      </label>
     </div>
     <div class="flex gap8" style="margin-top:16px">
       <button class="btn btn-primary" style="flex:1" onclick="saveEditTask()">Save</button>
@@ -2397,7 +2401,7 @@ function renderTaskRow(t, ctx) {
   return `<div class="task-row${done?' done':''}">
     <div class="task-check${done?' checked':''}" onclick="toggleTaskDone('${t.id}',${!done})"></div>
     <div class="task-body" onclick="openEditTask('${t.id}')" style="cursor:pointer">
-      <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
+      <div class="task-name${done?' striked':''}">${f['Deep Work']?'⚡ ':''}${esc(f.Name||'')}</div>
       <div class="task-meta">
         ${isSprint?`<span class="task-pill" style="background:${t._sprintNum===currentSprintNum()?'var(--teal)':'var(--gray-mid)'};color:white;font-size:10px">🎯 S${t._sprintNum||'?'}${t._sprintNum===currentSprintNum()?' · now':''}</span>`:''}
         ${isSprint&&t._goal?`<span class="task-pill" style="background:var(--purple-light,#EEEDFE);color:#3C3489;font-size:10px">${esc(t._goal)}</span>`:''}
@@ -2490,6 +2494,7 @@ function openEditTask(id) {
   document.getElementById('edit-task-mins').value = f['Estimated Minutes']||'';
   document.getElementById('edit-task-deadline').value = f['Target Date']||'';
   document.getElementById('edit-task-status').value = f.Status||'Todo';
+  document.getElementById('edit-task-deep').checked = f['Deep Work']===true;
   document.getElementById('edit-task-modal').style.display='flex';
 }
 function closeEditTask() {
@@ -2509,6 +2514,7 @@ async function saveEditTask() {
   fields['Estimated Minutes'] = mins>0 ? mins : null;        // null clears the field in Airtable
   const dl = document.getElementById('edit-task-deadline').value;
   fields['Target Date'] = dl ? dl : null;                    // null clears the deadline
+  fields['Deep Work'] = document.getElementById('edit-task-deep').checked;
   // Remove only undefined keys (null is intentional — it clears the field)
   Object.keys(fields).forEach(k=>fields[k]===undefined&&delete fields[k]);
   try {
@@ -3512,14 +3518,18 @@ function buildTodayBlocks(targetDate) {
     b._isWorkArea = (b.id === 'work-deep' || b.id === 'afternoon');
   });
 
-  const sortedTasks = todayTasks.slice().sort(prioSort);
+  // Deep-work-flagged tasks come first and may ONLY occupy the AM deep-work
+  // blocks (Business deep work, Work deep work) — never the afternoon.
+  const isDeep = t => t.fields['Deep Work'] === true;
+  const sortedTasks = todayTasks.slice().sort((a,b) => (isDeep(b)?1:0) - (isDeep(a)?1:0) || prioSort(a,b));
   const assignedTaskIds = new Set();
   for (const t of sortedTasks) {
     if (assignedTaskIds.has(t.id)) continue;
     const a = Array.isArray(t.fields.Area) ? t.fields.Area[0] : (t.fields.Area || '');
     const m = t.fields['Estimated Minutes'] || DEFAULT_TASK_MINS;
-    const compatible = workBlocks.filter(b =>
+    let compatible = workBlocks.filter(b =>
       blockAreas[b.id].includes(a) || (blockAreas[b.id].includes('__unassigned__') && !a));
+    if (isDeep(t)) compatible = compatible.filter(b => b.id === 'biz-morning' || b.id === 'work-deep'); // AM deep blocks only
     if (!compatible.length) continue;
     let placed = false;
     for (const b of compatible) {
@@ -3680,7 +3690,7 @@ function renderUnifiedSchedule(targetDate) {
         tasksHtml += `<div class="uday-task${isQ1?' q1':''}${done?' done':''}${isRunning?' active-task':''}" onclick="openEditTask('${t.id}')">
           <div class="task-check${done?' checked':''}" onclick="event.stopPropagation();toggleTaskDone('${t.id}',${!done})"></div>
           <div style="flex:1">
-            <div class="uday-task-name${done?' striked':''}">${esc(f.Name||'')}${t._isSprint?' 🎯':''}</div>
+            <div class="uday-task-name${done?' striked':''}">${f['Deep Work']?'⚡ ':''}${esc(f.Name||'')}${t._isSprint?' 🎯':''}</div>
             <div class="uday-task-meta">${metaParts.join(' · ')}</div>
           </div>
           <button class="uday-start${isRunning?' running':''}" onclick="event.stopPropagation();startTaskTimer('${taskArea}','${(f.Name||'').replace(/'/g,"\\'")}')">▶</button>
@@ -3910,7 +3920,7 @@ function sprintTaskHTML(t, isKat) {
   return `<div class="sprint-task-row${done?' done':''}">
     <div class="task-check${done?' checked':''}"${isKat?` onclick="toggleSprintTaskDone('${t.id}',${!done})"`:' style="cursor:default"'}></div>
     <div class="task-body">
-      <div class="task-name${done?' striked':''}">${esc(f.Name||'')}</div>
+      <div class="task-name${done?' striked':''}">${f['Deep Work']?'⚡ ':''}${esc(f.Name||'')}</div>
       <div class="task-meta">
         ${pName?`<span class="task-pill tp-area">${esc(pName)}</span>`:''}
         ${area?`<span class="task-pill" style="background:var(--gray-light);color:var(--gray)">${esc(area)}</span>`:''}
