@@ -928,7 +928,8 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 <div class="modal-bg" id="done-modal" style="display:none" onclick="if(event.target===this){document.getElementById('done-modal').style.display='none';pendingDone=null}">
   <div class="modal" style="max-height:unset">
     <div class="modal-title">How long did this take?</div>
-    <div style="font-size:13px;color:var(--gray);text-align:center;margin-bottom:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="done-modal-task"></div>
+    <div style="font-size:13px;color:var(--gray);text-align:center;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="done-modal-task"></div>
+    <div id="done-modal-hint" style="display:none;font-size:12px;color:var(--teal-dark);text-align:center;margin-bottom:10px"></div>
     <div style="display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:16px">
       <input type="number" id="done-actual-mins" class="field-num" style="width:90px;font-size:18px;text-align:center" min="1" step="5"/>
       <span style="font-size:14px;color:var(--gray)">minutes</span>
@@ -2443,7 +2444,20 @@ function toggleTaskDone(id, done) {
     const t = state.tasks.find(t=>t.id===id);
     pendingDone = {id};
     document.getElementById('done-modal-task').textContent = esc(t?.fields.Name||'');
-    document.getElementById('done-actual-mins').value = t?.fields['Estimated Minutes']||'';
+    // If a timer is running for THIS task, pre-fill the actual time with the
+    // tracked elapsed minutes (still editable). Mark it so we stop that timer.
+    const tn = t?.fields.Name || '';
+    let prefill = t?.fields['Estimated Minutes'] || '';
+    const hint = document.getElementById('done-modal-hint');
+    if (state.timer && state.timer.label === tn) {
+      const elapsed = Math.max(1, Math.round((Date.now() - state.timer.startTs)/60000));
+      prefill = elapsed;
+      pendingDone.timerTask = true;
+      if (hint) { hint.textContent = `⏱ Tracked ${elapsed}m on this task — adjust if needed.`; hint.style.display = 'block'; }
+    } else if (hint) {
+      hint.style.display = 'none';
+    }
+    document.getElementById('done-actual-mins').value = prefill;
     document.getElementById('done-modal').style.display = 'flex';
   } else {
     applyTaskDone(id, false, null);
@@ -2637,6 +2651,12 @@ async function applyTaskDone(id, done, actualMins) {
     if (t) {
       t.fields.Status = statusVal;
       if (!isSprint && done && actualMins) t.fields['Actual Minutes'] = actualMins;
+      // If a timer is running for this task, stop it WITHOUT its own log entry —
+      // applyTaskDone logs the (possibly edited) actual time below, avoiding a
+      // double entry.
+      if (done && state.timer && state.timer.label === (t.fields.Name||'')) {
+        clearTimerState(); renderTimerBanner();
+      }
       // Auto-log to Time Log — same for sprint tasks and normal tasks
       if (done) {
         const mins = actualMins || t.fields['Estimated Minutes'] || 0;
