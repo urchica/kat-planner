@@ -3783,6 +3783,22 @@ function renderUnifiedSchedule(targetDate) {
     }
   }
 
+  // R2/R3: "Completed today" — derived from today's Time Log task entries (today's view only)
+  if (isToday) {
+    const doneEntries = (state.timeLogs||[]).filter(l => (l.fields.Note||'').startsWith('Task: '));
+    if (doneEntries.length) {
+      const rows = doneEntries.map(l => {
+        const nm = (l.fields.Note||'').replace(/^Task:\s*/,'');
+        return `<div class="uday-swap-row" style="padding-left:6px">
+          <div style="flex:1"><span style="text-decoration:line-through;opacity:.7">${esc(nm)}</span></div>
+          <span class="uday-task-meta">${l.fields.Minutes||0}m</span>
+        </div>`;
+      }).join('');
+      const totalDone = doneEntries.reduce((s,l)=>s+(l.fields.Minutes||0),0);
+      html += `<details class="uday-more-wrap" style="margin-top:8px"><summary class="uday-more">✓ Completed today — ${doneEntries.length} task${doneEntries.length>1?'s':''} · ${fh(totalDone)}</summary>${rows}</details>`;
+    }
+  }
+
   if (!html) html = '<p class="text-sm text-gray">No schedule template for this day.</p>';
   el.innerHTML = html;
 }
