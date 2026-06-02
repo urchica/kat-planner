@@ -1203,7 +1203,7 @@ const DEFAULT_SCHEDULE = {
   // Per weekday. Hours include emails + meetings + ½h buffer for "work".
   days: {
     mon: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1, emailMins:90},
-    tue: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:1, defaultLevel:1, emailMins:60},
+    tue: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:2, defaultLevel:1, emailMins:60},
     wed: {start:'06:30', workEnd:'18:30', wrapEnd:'19:00', work:6, business:2, exercise:2, defaultLevel:1, emailMins:60},
     thu: {start:'06:30', workEnd:'17:00', wrapEnd:'17:30', work:5, business:2, exercise:2, defaultLevel:1, emailMins:60},
     fri: {start:'07:30', workEnd:'13:00', wrapEnd:'13:30', work:3, business:2, exercise:1, defaultLevel:1, emailMins:30}
@@ -3354,6 +3354,9 @@ function buildTodayBlocks(targetDate) {
   const deepWorkMins  = Math.round((ds.workDeepHours || 2) * 60);
   const bizMins = Math.round(ds.bizMorningHours * 60);
   const exerciseMins = Math.round((day.exercise || 0) * 60);
+  const breakfastMins = ds.breakfastMins || 0;
+  const closedownMins = ds.bufferMins || 0;
+  const available = wrapEndMins - dayStart;
 
   // ── Meetings are FIXED reservations; every other block flows around them ──
   const KIND_ICON  = { appointment:'📅', travel:'✈️', meeting:'👥', standing:'👥', custom:'📌' };
@@ -3378,6 +3381,27 @@ function buildTodayBlocks(targetDate) {
   }
   meetings.sort((a,b) => a.startMins - b.startMins);
   const busy = meetings.map(m => ({ s:m.startMins, e:m.startMins + m.durationMins }));
+  const meetingMins = busy.reduce((s,b) => s + (b.e - b.s), 0);
+
+  // ── WORK ENVELOPE: `day.work` hours that INCLUDES email + meetings + work
+  // tasks + wrap-up. Business / Exercise / Lunch / Breakfast are separate. ──
+  let workEnvelope = Math.round((day.work || 0) * 60);
+  let lunchMins = ds.lunchLearnMins || 0;
+  // Compression when the day can't fit by wrap: 1) trim Work by up to 1h,
+  // 2) trim Lunch toward a 15m minimum. Exercise stays fixed.
+  const compression = [];
+  let total = bizMins + breakfastMins + workEnvelope + exerciseMins + lunchMins;
+  if (total > available) {
+    let over = total - available;
+    const wc = Math.min(over, 60); if (wc > 0) { workEnvelope -= wc; over -= wc; compression.push(`Work −${fmtMins(wc)}`); }
+    if (over > 0) { const lc = Math.min(over, lunchMins - 15); if (lc > 0) { lunchMins -= lc; over -= lc; compression.push(`Lunch −${fmtMins(lc)}`); } }
+    if (over > 0) compression.push(`still ${fmtMins(over)} over — runs past wrap`);
+  }
+
+  // Work TASK time = envelope − email − close-down − meetings
+  const workTaskMins = Math.max(0, workEnvelope - emailMorningMins - emailAfternoonMins - closedownMins - meetingMins);
+  const deepWorkDur  = Math.min(deepWorkMins, workTaskMins);
+  const afternoonDur = Math.max(0, workTaskMins - deepWorkDur);
 
   // reserve(dur): next meeting-free slot of length `dur` at/after the cursor.
   let cursor = dayStart;
@@ -3394,42 +3418,38 @@ function buildTodayBlocks(targetDate) {
   }
   const add = (o) => { o.startMins = reserve(o.durationMins); blocks.push(o); };
 
-  // 1. Business deep work
+  // 1. Business deep work (separate from the work envelope)
   if (bizMins > 0) add({ id:'biz-morning', type:'work-block', label:'Business — deep work', icon:'🐕',
     color:'var(--teal-dark)', durationMins:bizMins, tasks:[], calEvents:[], nudge:'Top business priority first', noteKey:null });
   // 2. Breakfast
-  if (ds.breakfastMins > 0) add({ id:'breakfast', type:'meal', label:'Breakfast', icon:'🍳',
-    color:'#F59E0B', durationMins:ds.breakfastMins, tasks:[], calEvents:[], nudge:'🚫 Away from screen', noteKey:null });
-  // 3. Morning email check
+  if (breakfastMins > 0) add({ id:'breakfast', type:'meal', label:'Breakfast', icon:'🍳',
+    color:'#F59E0B', durationMins:breakfastMins, tasks:[], calEvents:[], nudge:'🚫 Away from screen', noteKey:null });
+  // 3. Morning email check (inside the work envelope)
   if (emailMorningMins > 0) add({ id:'email-morning', type:'email', label:'Email check', icon:'📧',
     color:'var(--teal)', durationMins:emailMorningMins, tasks:[], calEvents:[], nudge:'Quick inbox sweep — then into deep work', noteKey:null });
-  // 4. Work deep work (extend toward the exercise anchor if the morning is ahead)
-  if (day.work > 0) {
-    const workDeepDur = Math.max(deepWorkMins, exerciseFloor - cursor);
-    add({ id:'work-deep', type:'work-block', label:'Work — deep work', icon:'⚡', color:'var(--teal)',
-      durationMins:workDeepDur, tasks:[], calEvents:[], nudge:'Deep / Q1 work — protect this block', noteKey:null });
-  }
-  // 5. Exercise — midday anchor (no earlier than exerciseEarliest)
+  // 4. Work deep work — sized to its share of the work-task budget
+  if (deepWorkDur > 0) add({ id:'work-deep', type:'work-block', label:'Work — deep work', icon:'⚡', color:'var(--teal)',
+    durationMins:deepWorkDur, tasks:[], calEvents:[], nudge:'Deep / Q1 work — protect this block', noteKey:null });
+  // 5. Exercise — midday anchor (no earlier than exerciseEarliest), fixed length
   if (exerciseMins > 0) {
     if (cursor < exerciseFloor) cursor = exerciseFloor;
     add({ id:'exercise', type:'work-block', label:'Exercise', icon:'🏃', color:'var(--purple)',
       durationMins:exerciseMins, tasks:[], calEvents:[], nudge:'Move your body — protected midday time', noteKey:null });
   }
-  // 6. Lunch & Learn
-  if (ds.lunchLearnMins > 0) add({ id:'lunch-learn', type:'meal', label:'Lunch & Learn', icon:'🍽️',
-    color:'var(--purple)', durationMins:ds.lunchLearnMins, tasks:[], calEvents:[],
+  // 6. Lunch & Learn (compressible to 15m)
+  if (lunchMins > 0) add({ id:'lunch-learn', type:'meal', label:'Lunch & Learn', icon:'🍽️',
+    color:'var(--purple)', durationMins:lunchMins, tasks:[], calEvents:[],
     nudge: ds.lunchLearnGoal || '🎓 Eat away from desk · learn something', noteKey:'lunch-learn' });
-  // 7. Afternoon — lighter work (fills the free time before the Australia email + close-down)
-  const afternoonEnd = wrapEndMins - ds.bufferMins - emailAfternoonMins;
-  const afternoonMins = afternoonEnd - cursor;   // nominal; reserve() flows it around meetings
-  if (afternoonMins > 5) add({ id:'afternoon', type:'work-block', label:'Afternoon — lighter work', icon:'📋',
-    color:'var(--amber)', durationMins:afternoonMins, tasks:[], calEvents:[], nudge:'Lighter work · admin', noteKey:null });
-  // 8. Australia email
+  // 7. Afternoon — lighter work, sized to the rest of the work-task budget
+  if (afternoonDur > 0) add({ id:'afternoon', type:'work-block', label:'Afternoon — lighter work', icon:'📋',
+    color:'var(--amber)', durationMins:afternoonDur, tasks:[], calEvents:[], nudge:'Lighter work · admin', noteKey:null });
+  // 8. Australia email (inside the work envelope)
   if (emailAfternoonMins > 0) add({ id:'email-afternoon', type:'email', label:'Australia email', icon:'📧',
     color:'var(--amber)', durationMins:emailAfternoonMins, tasks:[], calEvents:[], nudge:'Australia inbox · urgent items only', noteKey:null });
-  // 9. Close-down
-  if (ds.bufferMins > 0) add({ id:'closedown', type:'buffer', label:'Close-down', icon:'💭', color:'var(--coral)',
-    durationMins:ds.bufferMins, tasks:[], calEvents:[], nudge:'Wrap up · plan tomorrow · close down fully', noteKey:null });
+  // 9. Close-down / wrap-up (inside the work envelope)
+  if (closedownMins > 0) add({ id:'closedown', type:'buffer', label:'Close-down', icon:'💭', color:'var(--coral)',
+    durationMins:closedownMins, tasks:[], calEvents:[], nudge:'Wrap up · plan tomorrow · close down fully', noteKey:null });
+  blocks._compression = compression;
 
   // Meetings join the timeline as their own rows
   blocks.push(...meetings);
@@ -3448,7 +3468,7 @@ function buildTodayBlocks(targetDate) {
   // forward to the next compatible block; no block is ever overfilled.
   const todayTasks = getTasksForDate(dateStr, isToday);
   const DEFAULT_TASK_MINS = 30;
-  let workTaskBudget = Math.max(0, Math.round((day.work || 0) * 60) - totalEmailMins);
+  let workTaskBudget = workTaskMins;  // envelope: work − email − meetings − wrap
   const blockAreas = {
     'biz-morning': ['Business'],
     'work-deep':   ['Work Work', '__unassigned__'],
@@ -3527,6 +3547,10 @@ function renderUnifiedSchedule(targetDate) {
   const allDay = blocks._allDay || [];
   if (allDay.length) {
     html += `<div class="uday-allday">📅 All day: ${allDay.map(e=>esc(e.title||'')).join(' · ')}</div>`;
+  }
+  // Compression note — what got trimmed to fit the day
+  if ((blocks._compression || []).length) {
+    html += `<div class="uday-allday" style="background:rgba(229,62,62,.08);color:#B45309">⚠️ Tight day — auto-trimmed: ${blocks._compression.map(esc).join(' · ')}</div>`;
   }
 
   for (const blk of blocks) {
