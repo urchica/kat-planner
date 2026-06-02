@@ -1357,6 +1357,7 @@ const AT = {
     return r.records||[];
   },
   async deleteTimeLog(id) { return this.call('DELETE',`Time%20Log/${id}`); },
+  async updateTimeLog(id,fields) { return this.call('PATCH','Time%20Log',{records:[{id,fields}]}); },
   async verify() {
     const r = await this.call('GET','Tasks?maxRecords=1');
     return !!r;
@@ -1815,13 +1816,26 @@ function renderWeeklyBalance() {
     const rawPct = b.target>0 ? Math.round(b.actual/b.target*100) : 0;
     const pctActual = b.actual>0 ? Math.min(100, Math.max(2, rawPct)) : 0; // min sliver so any logged time stays visible
     const pctExpected = b.target>0 ? Math.min(100,Math.round(b.expected/b.target*100)) : 0;
-    return `<div class="balance-row">
-      <div class="balance-head"><span>${b.label}</span><span class="text-sm" style="color:${color};font-weight:600">${fmtA(b.actual)} / ${b.target}h · ${statusLabel}</span></div>
-      <div class="balance-track">
-        <div class="balance-fill" style="width:${pctActual}%;background:${color}"></div>
-        <div class="balance-marker" style="left:${pctExpected}%" title="Pace target so far: ${b.expected.toFixed(1)}h"></div>
-      </div>
-    </div>`;
+    // Expandable: the week's individual Time Log entries for this bucket's areas
+    const entryRows = (state.weekTimeLogs||[]).filter(l => {
+      const a = Array.isArray(l.fields.Area)?l.fields.Area[0]:l.fields.Area;
+      return b.areas.includes(a);
+    }).sort((x,y)=>(y.fields.Date||'').localeCompare(x.fields.Date||''))
+      .map(l => `<div class="uday-swap-row" style="padding-left:6px">
+        <div style="flex:1"><span class="uday-task-meta">${(l.fields.Date||'').slice(5)} · ${l.fields.Minutes||0}m</span> ${esc(l.fields.Note||'')}</div>
+        <button class="uday-swap-btn" onclick="editTimeEntry('${l.id}')">✎</button>
+        <button class="task-del" onclick="deleteTimeEntry('${l.id}')">×</button>
+      </div>`).join('') || '<div class="text-sm text-gray" style="padding:4px 6px">No entries logged.</div>';
+    return `<details class="balance-row" style="border:none">
+      <summary style="list-style:none;cursor:pointer">
+        <div class="balance-head"><span>${b.label} <span class="text-sm text-gray">▸</span></span><span class="text-sm" style="color:${color};font-weight:600">${fmtA(b.actual)} / ${b.target}h · ${statusLabel}</span></div>
+        <div class="balance-track">
+          <div class="balance-fill" style="width:${pctActual}%;background:${color}"></div>
+          <div class="balance-marker" style="left:${pctExpected}%" title="Pace target so far: ${b.expected.toFixed(1)}h"></div>
+        </div>
+      </summary>
+      ${entryRows}
+    </details>`;
   }).join('');
   if (signals.length) html += `<div class="text-sm text-gray" style="margin-top:8px">Balance signals: ${signals.map(s=>`${esc(s.label)} ${s.hours.toFixed(1)}h`).join(' · ')}</div>`;
   el.innerHTML = html;
@@ -1852,11 +1866,44 @@ function renderTimeLedger() {
   const max = Math.max(...entries.map(e=>e[1]),1);
   el.innerHTML = entries.map(([area,mins]) => {
     const disp = mins>=60?`${Math.floor(mins/60)}h ${mins%60}m`:`${mins}m`;
-    return `<div class="area-bar-row">
-      <div class="area-bar-label"><span>${esc(area)}</span><span>${disp}</span></div>
-      <div class="area-bar-track"><div class="area-bar-fill" style="width:${Math.round(mins/max*100)}%;background:${TIME_AREA_COLORS[area]||'var(--teal)'}"></div></div>
-    </div>`;
+    // Individual entries for this area today — expandable, editable, deletable
+    const rows = state.timeLogs.filter(l => (Array.isArray(l.fields.Area)?l.fields.Area[0]:l.fields.Area)===area)
+      .map(l => `<div class="uday-swap-row" style="padding-left:6px">
+        <div style="flex:1"><span class="uday-task-meta">${l.fields.Minutes||0}m</span> ${esc(l.fields.Note||'')}</div>
+        <button class="uday-swap-btn" onclick="editTimeEntry('${l.id}')">✎</button>
+        <button class="task-del" onclick="deleteTimeEntry('${l.id}')">×</button>
+      </div>`).join('');
+    return `<details class="area-bar-row" style="border:none">
+      <summary style="list-style:none;cursor:pointer">
+        <div class="area-bar-label"><span>${esc(area)} <span class="text-sm text-gray">▸</span></span><span>${disp}</span></div>
+        <div class="area-bar-track"><div class="area-bar-fill" style="width:${Math.round(mins/max*100)}%;background:${TIME_AREA_COLORS[area]||'var(--teal)'}"></div></div>
+      </summary>
+      ${rows}
+    </details>`;
   }).join('');
+}
+
+// Edit / delete an individual Time Log entry (R7 — see & edit what you logged)
+async function editTimeEntry(id) {
+  const l = (state.weekTimeLogs||state.timeLogs).find(x=>x.id===id) || state.timeLogs.find(x=>x.id===id);
+  const cur = l?.fields.Minutes || 0;
+  const v = prompt('Minutes for this entry:', cur);
+  if (v===null) return;
+  const mins = parseInt(v);
+  if (isNaN(mins) || mins<0) { toast('Enter a number'); return; }
+  try {
+    await AT.updateTimeLog(id, { Minutes: mins });
+    await loadTimeLogs();
+    toast('Updated ✓');
+  } catch(e) { toast('Error: '+e.message); }
+}
+async function deleteTimeEntry(id) {
+  if (!confirm('Delete this time entry?')) return;
+  try {
+    await AT.deleteTimeLog(id);
+    await loadTimeLogs();
+    toast('Entry deleted');
+  } catch(e) { toast('Error: '+e.message); }
 }
 
 // — Timer (single at a time, survives refresh via localStorage) —
