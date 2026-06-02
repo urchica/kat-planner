@@ -3597,7 +3597,8 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
         </div>
         ${blk.nudge ? `<div class="uday-nudge" style="color:${blk.color}">${esc(blk.nudge)}</div>` : ''}
-        ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-${dateStr}',this.value)">${noteVal}</textarea>` : ''}
+        ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" id="lunch-note-${dateStr}" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-${dateStr}',this.value)">${noteVal}</textarea>
+        <button class="uday-swap-btn" style="margin-top:4px" onclick="saveLunchNote('${dateStr}')">✓ Save learning note</button>` : ''}
         ${calHtmlFor(blk)}
       </div>`;
       continue;
@@ -3716,6 +3717,14 @@ function startTaskTimer(area, taskName) {
   renderTimerBanner();
   renderUnifiedSchedule();
   toast('⏱ ' + taskName);
+}
+
+// Save the Lunch & Learn note (auto-saved on input; this confirms + journals it).
+function saveLunchNote(dateStr) {
+  const el = document.getElementById('lunch-note-' + dateStr);
+  const val = el ? el.value.trim() : (localStorage.getItem('kat-lunch-'+dateStr)||'').trim();
+  localStorage.setItem('kat-lunch-'+dateStr, val);
+  toast(val ? '🎓 Learning note saved' : 'Note cleared');
 }
 
 // Swap a backlog task into a block by bumping its priority to Q1 (sorts to top).
