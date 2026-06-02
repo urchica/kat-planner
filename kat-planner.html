@@ -1307,7 +1307,7 @@ const AT = {
     if (ex) return this.call('PATCH','Daily%20Log',{records:[{id:ex.id,fields}]});
     return this.call('POST','Daily%20Log',{records:[{fields:{Date:state.dayKey,...fields}}]});
   },
-  async logSymptom(fields) { return this.call('POST','Symptoms',{records:[{fields}]}); },
+  async logSymptom(fields) { return this.call('POST','Symptoms',{records:[{fields}],typecast:true}); },
   async getSprintGoals() {
     const r = await this.call('GET','Sprint%20Goals?sort[0][field]=Name');
     return r.records||[];
@@ -1744,7 +1744,7 @@ const TIMER_CHIPS = [
 function mondayKey() {
   const d = new Date();
   d.setDate(d.getDate() - ((d.getDay()+6)%7)); // Mon=0 … Sun=6 offset back to Monday
-  return d.toISOString().slice(0,10);
+  return localDateStr(d);   // LOCAL date — avoids the after-5pm UTC rollover that reset the week
 }
 async function loadTimeLogs() {
   try {
@@ -2779,16 +2779,17 @@ async function logSymptom() {
   const name = document.getElementById('sym-name').value;
   const other = document.getElementById('sym-other').value.trim();
   if (!name) { toast('Please select a symptom'); return; }
+  const impact = document.getElementById('sym-impact').value; // Mild/Moderate/Severe → Severity field
   const fields = {
     'Date': state.dayKey,
     'Time': new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
-    'Symptom': name==='Other'?(other||'Other'):name,
-    'Severity': state.symSev||null,
+    'Symptoms': name==='Other'?(other||'Other'):name,   // table field is "Symptoms" (typecast creates new options)
+    'Severity': impact||null,
     'Duration': document.getElementById('sym-duration').value.trim()||null,
-    'Impact on day': document.getElementById('sym-impact').value,
     'Possible Trigger': document.getElementById('sym-trigger').value.trim()||null,
     'Actions Taken': document.getElementById('sym-action').value.trim()||null
   };
+  if (state.symSev) fields['Notes'] = `Severity scale: ${state.symSev}/5`;
   try {
     await AT.logSymptom(fields);
     toast('Symptom logged');
@@ -2816,18 +2817,18 @@ function setDayRating(n, el) {
 }
 
 async function saveReflection() {
+  // Map the level number to the Daily Log "Day Level" select option exactly
+  const DAY_LEVEL_OPT = {1:'1. Full', 2:'2. Moderate', 3:'3. Light', 4:'4. Survival'};
   const fields = {
     'Date': state.dayKey,
-    'Day Level': LEVEL_CONFIG[state.level].label.replace('Level ',''),
+    'Day Level': DAY_LEVEL_OPT[state.level] || null,
     'What Worked': document.getElementById('refl-good').value||null,
     'What to Change': document.getElementById('refl-change').value||null,
     'Notes': document.getElementById('refl-notes').value||null,
     'Day Rating': state.dayRating||null,
   };
   PILLARS.forEach(p=>{ if(state.pillars[p]) fields[p]=state.pillars[p]; });
-  // Calculate work minutes from done tasks
-  const workMins = state.tasks.filter(t=>t.fields.Status==='Done'&&isWorkTask(t)).reduce((s,t)=>s+(t.fields['Actual Minutes']||t.fields['Estimated Minutes']||0),0);
-  if (workMins) fields['Work Minutes']=workMins;
+  // (No "Work Minutes" field in Daily Log — work time lives in the Time Log.)
   try {
     await AT.saveDailyLog(fields);
     toast('Reflection saved ✓');
@@ -2836,8 +2837,12 @@ async function saveReflection() {
 
 // ─── Week data ─────────────────────────────────────────────────
 async function loadWeekData() {
-  const mon = new Date(); mon.setDate(mon.getDate()-mon.getDay()+1);
-  const monStr = mon.toISOString().slice(0,10);
+  const monStr = mondayKey();   // local Monday (consistent with the rest of the app)
+
+  // Ensure this week's time logs are loaded (work hours come from here)
+  if (!state.weekTimeLogs || !state.weekTimeLogs.length) {
+    try { state.weekTimeLogs = await AT.getTimeLogs(monStr); } catch(e) { state.weekTimeLogs = state.weekTimeLogs||[]; }
+  }
 
   // Load tasks (core — show error if this fails)
   let tasks = [];
@@ -2850,7 +2855,12 @@ async function loadWeekData() {
   try { logs = await AT.getWeekLogs(monStr); } catch(e) {}
 
   document.getElementById('wk-tasks-done').textContent = tasks.length;
-  const workMins = tasks.filter(isWorkTask).reduce((s,t)=>s+(t.fields['Actual Minutes']||t.fields['Estimated Minutes']||0),0);
+  // Work hours from the week's Time Log (source of truth — includes auto-logged
+  // task time and timer/brain-dump entries, not just tasks added this week)
+  const workMins = (state.weekTimeLogs||[]).filter(l => {
+    const a = Array.isArray(l.fields.Area) ? l.fields.Area[0] : l.fields.Area;
+    return WORK_TODAY_AREAS.includes(a);
+  }).reduce((s,l) => s + (l.fields.Minutes||0), 0);
   document.getElementById('wk-work-hrs').textContent = (workMins/60).toFixed(1)+'h';
 
   const ratings = logs.map(l=>l.fields['Day Rating']).filter(Boolean);
