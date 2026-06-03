@@ -3058,6 +3058,9 @@ const WIN_TZ_TO_IANA = {
   'GMT Standard Time':'Europe/London','Greenwich Standard Time':'Europe/London',
   'UTC':'UTC','Coordinated Universal Time':'UTC'
 };
+// Bump when calendar parsing/timezone logic changes so stale cached events
+// (parsed by older code) are discarded instead of showing wrong times.
+const CAL_CACHE_VERSION = 3;
 function getTargetTz() { return localStorage.getItem('kat-timezone') || 'America/Los_Angeles'; }
 function ianaFromTzid(tzid) {
   if (!tzid) return null;
@@ -3254,6 +3257,8 @@ async function fetchAndCacheCalEvents() {
   try {
     localStorage.setItem('kat-cal-cache', JSON.stringify({
       ts: Date.now(),
+      ver: CAL_CACHE_VERSION,
+      tz: getTargetTz(),
       events: state.calEvents.map(e => ({ ...e, start: e.start?.toISOString(), end: e.end?.toISOString() }))
     }));
   } catch(e) {}
@@ -3264,7 +3269,8 @@ async function fetchAndCacheCalEvents() {
 function loadCalCache() {
   try {
     const c = JSON.parse(localStorage.getItem('kat-cal-cache') || 'null');
-    if (!c || Date.now() - c.ts > 2 * 3600000) return false;
+    // Discard cache from older parsing logic or a different timezone, or >2h old.
+    if (!c || c.ver !== CAL_CACHE_VERSION || c.tz !== getTargetTz() || Date.now() - c.ts > 2 * 3600000) return false;
     state.calEvents = c.events.map(e => ({ ...e, start: e.start ? new Date(e.start) : null, end: e.end ? new Date(e.end) : null }));
     return true;
   } catch(e) { return false; }
@@ -3529,9 +3535,13 @@ function buildTodayBlocks(targetDate) {
   // 8. Australia email (inside the work envelope)
   if (emailAfternoonMins > 0) add({ id:'email-afternoon', type:'email', label:'Australia email', icon:'📧',
     color:'var(--amber)', durationMins:emailAfternoonMins, tasks:[], calEvents:[], nudge:'Australia inbox · urgent items only', noteKey:null });
-  // 9. Close-down / wrap-up (inside the work envelope)
-  if (closedownMins > 0) add({ id:'closedown', type:'buffer', label:'Close-down', icon:'💭', color:'var(--coral)',
-    durationMins:closedownMins, tasks:[], calEvents:[], nudge:'Wrap up · plan tomorrow · close down fully', noteKey:null });
+  // 9. Close-down / wrap-up — anchored to the END of the day (ends at wrap time,
+  // or right after the last block if meetings pushed the day past wrap).
+  if (closedownMins > 0) {
+    cursor = Math.max(cursor, wrapEndMins - closedownMins);
+    add({ id:'closedown', type:'buffer', label:'Close-down', icon:'💭', color:'var(--coral)',
+      durationMins:closedownMins, tasks:[], calEvents:[], nudge:'Wrap up · plan tomorrow · close down fully', noteKey:null });
+  }
   blocks._compression = compression;
 
   // Meetings join the timeline as their own rows
