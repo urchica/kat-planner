@@ -3053,14 +3053,25 @@ const WIN_TZ_TO_IANA = {
   'Pacific Standard Time':'America/Los_Angeles','Pacific Daylight Time':'America/Los_Angeles',
   'Mountain Standard Time':'America/Denver','US Mountain Standard Time':'America/Phoenix',
   'Central Standard Time':'America/Chicago','Eastern Standard Time':'America/New_York',
+  'Hawaiian Standard Time':'Pacific/Honolulu','Alaskan Standard Time':'America/Anchorage',
+  // Australia
   'AUS Eastern Standard Time':'Australia/Sydney','AUS Eastern Daylight Time':'Australia/Sydney',
-  'AUS Central Standard Time':'Australia/Adelaide','W. Australia Standard Time':'Australia/Perth',
+  'E. Australia Standard Time':'Australia/Brisbane','Aus Central Standard Time':'Australia/Adelaide',
+  'AUS Central Standard Time':'Australia/Adelaide','Cen. Australia Standard Time':'Australia/Adelaide',
+  'Tasmania Standard Time':'Australia/Hobart','W. Australia Standard Time':'Australia/Perth',
+  // Europe / UK
   'GMT Standard Time':'Europe/London','Greenwich Standard Time':'Europe/London',
+  'W. Europe Standard Time':'Europe/Berlin','Central Europe Standard Time':'Europe/Budapest',
+  'Central European Standard Time':'Europe/Warsaw','Romance Standard Time':'Europe/Paris',
+  // Asia / NZ
+  'Tokyo Standard Time':'Asia/Tokyo','China Standard Time':'Asia/Shanghai',
+  'Singapore Standard Time':'Asia/Singapore','India Standard Time':'Asia/Kolkata',
+  'New Zealand Standard Time':'Pacific/Auckland',
   'UTC':'UTC','Coordinated Universal Time':'UTC'
 };
 // Bump when calendar parsing/timezone logic changes so stale cached events
 // (parsed by older code) are discarded instead of showing wrong times.
-const CAL_CACHE_VERSION = 3;
+const CAL_CACHE_VERSION = 4;
 function getTargetTz() { return localStorage.getItem('kat-timezone') || 'America/Los_Angeles'; }
 function ianaFromTzid(tzid) {
   if (!tzid) return null;
@@ -3110,14 +3121,41 @@ function parseIcalDt(val, tzid) {
   if (hasZ) {
     date = new Date(Date.UTC(y, mo-1, d, h, mi, s)); // already UTC
   } else {
-    // Zoned (TZID) or floating → interpret wall-clock in that zone (floating = target zone)
-    const iana = ianaFromTzid(tzid) || getTargetTz();
-    date = zonedWallToUTC(y, mo, d, h, mi, s, iana);
+    const iana = ianaFromTzid(tzid);
+    if (iana) {
+      date = zonedWallToUTC(y, mo, d, h, mi, s, iana);           // mapped zone (DST-correct via Intl)
+    } else if (tzid && _icalTzOffsets[tzid] != null) {
+      // Unmapped TZID → use the fixed offset from the feed's VTIMEZONE definition
+      date = new Date(Date.UTC(y, mo-1, d, h, mi, s) - _icalTzOffsets[tzid]*60000);
+    } else {
+      date = zonedWallToUTC(y, mo, d, h, mi, s, getTargetTz());  // floating → target zone
+    }
   }
   return { date, allDay: false };
 }
 
+// TZID → UTC offset (minutes east) parsed from the iCal's VTIMEZONE blocks; a
+// fallback for Windows zone names not in WIN_TZ_TO_IANA so they never silently
+// default to the local zone.
+let _icalTzOffsets = {};
+function parseVTimezones(text) {
+  _icalTzOffsets = {};
+  text.split('BEGIN:VTIMEZONE').slice(1).forEach(block => {
+    const b = block.split('END:VTIMEZONE')[0];
+    const tzid = (b.match(/TZID:([^\r\n]+)/)||[])[1];
+    if (!tzid) return;
+    const stdBlock = b.split('BEGIN:STANDARD')[1] || b;   // prefer standard-time offset
+    const off = (stdBlock.match(/TZOFFSETTO:([+-]?\d{4})/)||[])[1];
+    if (off) {
+      const sign = off[0]==='-' ? -1 : 1;
+      const dg = off.replace(/[+-]/,'');
+      _icalTzOffsets[tzid.trim()] = sign*(parseInt(dg.slice(0,2))*60 + parseInt(dg.slice(2,4)));
+    }
+  });
+}
+
 function parseIcal(text) {
+  parseVTimezones(text);   // populate _icalTzOffsets before parsing event times
   const lines = text.replace(/\r\n[ \t]/g, '').replace(/\r/g, '').split('\n');
   const events = [];
   let inEvent = false, ev = {};
