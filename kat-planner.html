@@ -401,6 +401,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
               <option value="Q4 Drop">Low Priority</option>
             </select>
             <input class="field-num" id="day-task-mins" type="number" placeholder="Min" min="5" step="5"/>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="day-task-deep"/>⚡ Deep</label>
           </div>
           <button class="text-sm text-gray" style="background:none;border:none;cursor:pointer;margin-top:4px" onclick="toggleDayFields()">⋯ more options</button>
         </div>
@@ -572,6 +573,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             </select>
             <input class="field-num" id="all-task-mins" type="number" placeholder="Min" min="5" step="5"/>
             <input class="field-num form-input" id="all-task-date" type="date" style="width:130px;flex:none"/>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="all-task-deep"/>⚡ Deep</label>
           </div>
           <button class="text-sm text-gray" style="background:none;border:none;cursor:pointer;margin-top:4px" onclick="toggleAllFields()">⋯ more options</button>
         </div>
@@ -2498,15 +2500,26 @@ function toggleTaskDone(id, done) {
     // If a timer is running for THIS task, pre-fill the actual time with the
     // tracked elapsed minutes (still editable). Mark it so we stop that timer.
     const tn = t?.fields.Name || '';
-    let prefill = t?.fields['Estimated Minutes'] || '';
-    const hint = document.getElementById('done-modal-hint');
+    const taskNote = 'Task: ' + tn;
+    // Time ALREADY logged for this task today (timer stops, earlier work, etc.)
+    const alreadyMins = (state.timeLogs||[]).filter(l => l.fields.Note === taskNote)
+      .reduce((s,l) => s + (l.fields.Minutes||0), 0);
+    // Time on a timer currently running for this task
+    let timerElapsed = 0;
     if (state.timer && state.timer.label === tn) {
-      const elapsed = Math.max(1, Math.round((Date.now() - state.timer.startTs)/60000));
-      prefill = elapsed;
-      pendingDone.timerTask = true;
-      if (hint) { hint.textContent = `⏱ Tracked ${elapsed}m on this task — adjust if needed.`; hint.style.display = 'block'; }
-    } else if (hint) {
-      hint.style.display = 'none';
+      timerElapsed = Math.max(1, Math.round((Date.now() - state.timer.startTs)/60000));
+    }
+    const tracked = alreadyMins + timerElapsed;
+    const prefill = tracked > 0 ? tracked : (t?.fields['Estimated Minutes'] || '');
+    const hint = document.getElementById('done-modal-hint');
+    if (hint) {
+      if (tracked > 0) {
+        const parts = [];
+        if (alreadyMins > 0) parts.push(`${alreadyMins}m already logged`);
+        if (timerElapsed > 0) parts.push(`${timerElapsed}m on the running timer`);
+        hint.textContent = `⏱ ${parts.join(' + ')} — this is the total tracked; adjust if needed.`;
+        hint.style.display = 'block';
+      } else { hint.style.display = 'none'; }
     }
     document.getElementById('done-actual-mins').value = prefill;
     document.getElementById('done-modal').style.display = 'flex';
@@ -2705,18 +2718,23 @@ async function applyTaskDone(id, done, actualMins) {
       t.fields.Status = statusVal;
       if (!isSprint && done && actualMins) t.fields['Actual Minutes'] = actualMins;
       // If a timer is running for this task, stop it WITHOUT its own log entry —
-      // applyTaskDone logs the (possibly edited) actual time below, avoiding a
-      // double entry.
+      // we reconcile the total below so nothing is double-counted.
       if (done && state.timer && state.timer.label === (t.fields.Name||'')) {
         clearTimerState(); renderTimerBanner();
       }
-      // Auto-log to Time Log — same for sprint tasks and normal tasks
+      // Reconcile the Time Log so the TOTAL for this task equals the confirmed
+      // actual — never additive (R20). actualMins is the intended total; we only
+      // add the difference over what's already logged for this task today (R18).
       if (done) {
-        const mins = actualMins || t.fields['Estimated Minutes'] || 0;
+        const taskNote = 'Task: '+(t.fields.Name||'');
+        const alreadyMins = (state.timeLogs||[]).filter(l => l.fields.Note === taskNote)
+          .reduce((s,l) => s + (l.fields.Minutes||0), 0);
+        const targetTotal = actualMins || t.fields['Estimated Minutes'] || 0;
+        const toAdd = targetTotal - alreadyMins;
         const area = Array.isArray(t.fields.Area) ? t.fields.Area[0] : t.fields.Area;
-        if (mins > 0 && area && TIMELOG_AREAS.includes(area)) {
+        if (toAdd > 0 && area && TIMELOG_AREAS.includes(area)) {
           try {
-            await AT.logTime({Date: state.dayKey, Area: area, Minutes:mins, Note:'Task: '+(t.fields.Name||'')});
+            await AT.logTime({Date: state.dayKey, Area: area, Minutes:toAdd, Note:taskNote});
             await loadTimeLogs();
           } catch(e) { /* ledger best-effort */ }
         }
@@ -2762,10 +2780,12 @@ async function addTask(ctx) {
   if (area) fields['Area'] = [area];
   if (mins) fields['Estimated Minutes'] = parseInt(mins);
   if (targetDate) fields['Target Date'] = targetDate;
+  if (document.getElementById(`${ctx}-task-deep`)?.checked) fields['Deep Work'] = true;
   try {
     const r = await AT.createTask(fields);
     state.tasks.unshift(r.records[0]);
     inputEl.value=''; autoResize(inputEl);
+    const deepEl = document.getElementById(`${ctx}-task-deep`); if (deepEl) deepEl.checked = false;
     renderTodayTasks(); renderAllTasks(); renderWorkBar();
     toast('Task added');
   } catch(e) {
