@@ -3222,7 +3222,7 @@ const WIN_TZ_TO_IANA = {
 };
 // Bump when calendar parsing/timezone logic changes so stale cached events
 // (parsed by older code) are discarded instead of showing wrong times.
-const CAL_CACHE_VERSION = 4;
+const CAL_CACHE_VERSION = 5;
 function getTargetTz() { return localStorage.getItem('kat-timezone') || 'America/Los_Angeles'; }
 function ianaFromTzid(tzid) {
   if (!tzid) return null;
@@ -3374,20 +3374,36 @@ function expandRecurringEvents(events) {
     };
 
     if (freq === 'WEEKLY') {
-      const days = (byday && byday.length) ? byday : [base.getDay()];
-      let wk = new Date(base); wk.setDate(base.getDate() - base.getDay()); // Sunday of base week
-      for (let w = 0; w < MAX; w++) {
-        const wkBase = new Date(wk); wkBase.setDate(wk.getDate() + w*7*interval);
-        if (wkBase > rangeEnd) break;
-        if (until && wkBase > until) break;
-        for (const dow of days) {
-          const occ = new Date(wkBase); occ.setDate(wkBase.getDate()+dow);
-          occ.setHours(base.getHours(), base.getMinutes(), 0, 0);
-          if (occ < base) continue;
-          if (count && generated >= count) break;
-          generated++; emit(occ);
+      const stepMs = 7 * interval * 86400000;
+      // BYDAY weekdays are in the event's SOURCE timezone. Rather than mapping
+      // them to the display timezone (which shifts the day when the event crosses
+      // midnight on conversion — e.g. a 10am Brisbane meeting is the previous day
+      // in Pacific), we step from the already-converted base INSTANT by whole
+      // weeks. This keeps every occurrence on the correct display day/time.
+      const multi = byday && byday.length > 1;
+      if (!multi) {
+        // single weekly series (no BYDAY, or one BYDAY) — exact weekly steps
+        let occ = new Date(base);
+        for (let i = 0; i < MAX; i++) {
+          if (occ > rangeEnd || (until && occ > until) || (count && generated >= count)) break;
+          generated++; emit(new Date(occ));
+          occ = new Date(occ.getTime() + stepMs);
         }
-        if (count && generated >= count) break;
+      } else {
+        // multiple BYDAY days — offset each from the base's own (display) weekday
+        const baseDow = base.getDay();
+        const offsets = byday.map(d => ((d - baseDow) % 7 + 7) % 7);
+        for (let w = 0; w < MAX; w++) {
+          const wkBase = new Date(base.getTime() + w * stepMs);
+          if (wkBase > rangeEnd || (until && wkBase > until)) break;
+          for (const off of offsets) {
+            const occ = new Date(wkBase.getTime() + off * 86400000);
+            if (occ < base || (until && occ > until)) continue;
+            if (count && generated >= count) break;
+            generated++; emit(occ);
+          }
+          if (count && generated >= count) break;
+        }
       }
     } else if (freq === 'DAILY') {
       let cur = new Date(base);
