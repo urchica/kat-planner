@@ -534,6 +534,19 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <select class="field-select" id="filter-goal" onchange="renderAllTasks()">
               <option value="">All projects</option>
             </select>
+            <select class="field-select" id="filter-priority" onchange="renderAllTasks()">
+              <option value="">All priorities</option>
+              <option value="Q1 Do Now">Top (Q1)</option>
+              <option value="Q2 Schedule">High (Q2)</option>
+              <option value="Q3 Delegate">Medium (Q3)</option>
+              <option value="Q4 Drop">Low (Q4)</option>
+            </select>
+            <select class="field-select" id="filter-time" onchange="renderAllTasks()">
+              <option value="">Any time</option>
+              <option value="deep">⚡ Deep (≥1h)</option>
+              <option value="quick">Quick (&lt;1h)</option>
+              <option value="unsized">Unestimated</option>
+            </select>
             <button class="btn btn-ghost btn-sm" onclick="loadTasks()">↻</button>
           </div>
         </div>
@@ -672,17 +685,17 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           </div>
           <div class="refl-label">What worked well today?</div>
           <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:8px">
-            <textarea class="refl-textarea" id="refl-good" placeholder="One thing that went well..." style="flex:1;margin-bottom:0"></textarea>
+            <textarea class="refl-textarea" id="refl-good" placeholder="One thing that went well..." style="flex:1;margin-bottom:0" oninput="saveReflDraft()"></textarea>
             <button class="icon-btn" id="voice-btn-refl-good" onclick="toggleVoice('refl-good','voice-btn-refl-good')" title="Voice input">🎤</button>
           </div>
           <div class="refl-label">What to do differently tomorrow?</div>
           <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:8px">
-            <textarea class="refl-textarea" id="refl-change" placeholder="One adjustment for tomorrow..." style="flex:1;margin-bottom:0"></textarea>
+            <textarea class="refl-textarea" id="refl-change" placeholder="One adjustment for tomorrow..." style="flex:1;margin-bottom:0" oninput="saveReflDraft()"></textarea>
             <button class="icon-btn" id="voice-btn-refl-change" onclick="toggleVoice('refl-change','voice-btn-refl-change')" title="Voice input">🎤</button>
           </div>
           <div class="refl-label">Notes / carry forward</div>
           <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:8px">
-            <textarea class="refl-textarea" id="refl-notes" placeholder="Anything to remember for tomorrow..." style="flex:1;margin-bottom:0"></textarea>
+            <textarea class="refl-textarea" id="refl-notes" placeholder="Anything to remember for tomorrow..." style="flex:1;margin-bottom:0" oninput="saveReflDraft()"></textarea>
             <button class="icon-btn" id="voice-btn-refl-notes" onclick="toggleVoice('refl-notes','voice-btn-refl-notes')" title="Voice input">🎤</button>
           </div>
           <button class="btn btn-primary" style="width:100%" onclick="saveReflection()">Save reflection</button>
@@ -1426,12 +1439,27 @@ function loadLocalState() {
   const liBtn = document.getElementById('level-indicator');
   liBtn.textContent = lc.label;
   liBtn.className = `btn btn-ghost btn-sm lvl-${state.level}`;
+  // R21: restore any in-progress reflection text so pausing/returning doesn't lose it
+  const rd = state.reflectionDraft || {};
+  const setIf = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+  setIf('refl-good', rd.good); setIf('refl-change', rd.change); setIf('refl-notes', rd.notes);
+}
+
+// R21: persist reflection text as it's typed (per day), so it survives reloads
+function saveReflDraft() {
+  state.reflectionDraft = {
+    good: document.getElementById('refl-good')?.value || '',
+    change: document.getElementById('refl-change')?.value || '',
+    notes: document.getElementById('refl-notes')?.value || ''
+  };
+  saveLocalState();
 }
 
 function saveLocalState() {
   localStorage.setItem('kat-day-'+state.dayKey, JSON.stringify({
     level: state.level, priorities: state.priorities, customMeetings: state.customMeetings,
-    pillars: state.pillars, reflection: state.reflection, dayRating: state.dayRating
+    pillars: state.pillars, reflection: state.reflection, dayRating: state.dayRating,
+    reflectionDraft: state.reflectionDraft
   }));
 }
 
@@ -2354,13 +2382,20 @@ function renderAllTasks() {
   const statusF = document.getElementById('filter-status')?.value||'';
   const areaF = document.getElementById('filter-area')?.value||'';
   const goalF = goalSel?.value||'';
+  const prioF = document.getElementById('filter-priority')?.value||'';
+  const timeF = document.getElementById('filter-time')?.value||'';
   let tasks = [...state.tasks];
-  if (statusF) tasks = tasks.filter(t=>t.fields.Status===statusF);
+  if (statusF) tasks = tasks.filter(t=>t.fields.Status===statusF || (statusF==='Todo' && t.fields.Status==='To Do'));
   if (areaF) tasks = tasks.filter(t => {
     const a=t.fields.Area; if(!a) return false;
     return Array.isArray(a)?a.includes(areaF):a===areaF;
   });
   if (goalF) tasks = tasks.filter(t => t._goal === goalF);
+  if (prioF) tasks = tasks.filter(t => t.fields.Priority === prioF);
+  if (timeF) tasks = tasks.filter(t => {
+    const m = t.fields['Estimated Minutes']||0;
+    return timeF==='deep' ? m>=60 : timeF==='quick' ? (m>0&&m<60) : !m;
+  });
   document.getElementById('all-task-count').textContent = tasks.length+' tasks';
   const el = document.getElementById('all-tasks-list');
   if (!tasks.length) { el.innerHTML='<div class="no-tasks">No tasks match.</div>'; return; }
@@ -3490,7 +3525,12 @@ function buildTodayBlocks(targetDate) {
   const day = SCHEDULE.days[schedKey];
   if (!day) return [];
 
-  const dayStart = timeToMins(day.start || '06:30');
+  let dayStart = timeToMins(day.start || '06:30');
+  // R17: "Reschedule" re-plans the remaining day from the current time — blocks
+  // that already passed drop off and everything re-fits into the time left.
+  if (isToday && state.rescheduledFrom) {
+    dayStart = Math.max(dayStart, state.rescheduledFrom.getHours()*60 + state.rescheduledFrom.getMinutes());
+  }
   const wrapEndMins = timeToMins(day.wrapEnd || '17:30');
   const blocks = [];
 
@@ -3902,9 +3942,17 @@ async function bumpTaskPriority(id) {
 }
 
 function rescheduleDay() {
+  // Toggle: if already rescheduled, tapping again restores the full-day view.
+  if (state.rescheduledFrom) {
+    state.rescheduledFrom = null;
+    renderUnifiedSchedule();
+    toast('↩ Back to the full-day plan');
+    return;
+  }
   state.rescheduledFrom = new Date();
   renderUnifiedSchedule();
-  toast('↻ Rescheduled from ' + state.rescheduledFrom.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}));
+  const now = state.rescheduledFrom.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  toast(`↻ Re-planned from ${now} — remaining blocks re-fit into the time left (tap ↻ again to undo)`, 4000);
 }
 
 // ─── Utils ─────────────────────────────────────────────────────
