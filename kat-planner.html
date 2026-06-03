@@ -1378,6 +1378,17 @@ const AT = {
   },
   async deleteTimeLog(id) { return this.call('DELETE',`Time%20Log/${id}`); },
   async updateTimeLog(id,fields) { return this.call('PATCH','Time%20Log',{records:[{id,fields}]}); },
+  // Cross-device running timer (single record in Active Timer)
+  async getActiveTimer() { const r = await this.call('GET','Active%20Timer?maxRecords=1'); return r.records?.[0]||null; },
+  async setActiveTimer(fields) {
+    const ex = await this.getActiveTimer();
+    if (ex) return this.call('PATCH','Active%20Timer',{records:[{id:ex.id,fields}]});
+    return this.call('POST','Active%20Timer',{records:[{fields}]});
+  },
+  async clearActiveTimer() {
+    const r = await this.call('GET','Active%20Timer');
+    for (const rec of (r.records||[])) { try { await this.call('DELETE',`Active%20Timer/${rec.id}`); } catch(e){} }
+  },
   async verify() {
     const r = await this.call('GET','Tasks?maxRecords=1');
     return !!r;
@@ -1984,6 +1995,7 @@ function startTimer(chipIdx) {
   state.timer = {area:c.area, label:c.label, note:c.note, startTs:Date.now()};
   localStorage.setItem('kat-timer', JSON.stringify(state.timer));
   renderTimerBanner();
+  syncActiveTimer();
 }
 function hhmm(ts) { const d = new Date(ts); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 function stopTimer() {
@@ -2006,6 +2018,13 @@ function clearTimerState() {
   state.timer = null;
   localStorage.removeItem('kat-timer');
   if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval=null; }
+  AT.clearActiveTimer().catch(()=>{});   // clear cross-device timer too
+}
+// Persist the running timer to Airtable so other devices can see/stop it (R8)
+function syncActiveTimer() {
+  if (!state.timer) return;
+  AT.setActiveTimer({ Label: state.timer.label||'', Area: state.timer.area||'',
+    StartTs: state.timer.startTs, Note: state.timer.note||'' }).catch(()=>{});
 }
 function renderTimerBanner() {
   const banner = document.getElementById('timer-banner');
@@ -2025,6 +2044,16 @@ function tickTimer() {
 function restoreTimer() {
   const saved = localStorage.getItem('kat-timer');
   if (saved) { try { state.timer = JSON.parse(saved); renderTimerBanner(); } catch(e){} }
+  // Cross-device (R8): if a timer is running per Airtable, adopt it so this
+  // device shows it and can stop it.
+  AT.getActiveTimer().then(rec => {
+    if (!rec || !rec.fields.StartTs) return;
+    state.timer = { area: rec.fields.Area||'', label: rec.fields.Label||'',
+      note: rec.fields.Note||'', startTs: rec.fields.StartTs };
+    localStorage.setItem('kat-timer', JSON.stringify(state.timer));
+    renderTimerBanner();
+    if (typeof renderUnifiedSchedule==='function') renderUnifiedSchedule();
+  }).catch(()=>{});
 }
 
 // — Brain-dump parser —
@@ -4032,6 +4061,7 @@ function startTaskTimer(area, taskName) {
   localStorage.setItem('kat-timer', JSON.stringify(state.timer));
   renderTimerBanner();
   renderUnifiedSchedule();
+  syncActiveTimer();
   toast('⏱ ' + taskName);
 }
 
