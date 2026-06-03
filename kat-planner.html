@@ -435,6 +435,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           </div>
           <!-- Per-area ledger -->
           <div id="time-ledger"><!-- rendered by JS --></div>
+          <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addPastTime()">＋ Add past time (with start/end)</button>
           <!-- Brain dump -->
           <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
             <div class="text-sm text-gray" style="margin-bottom:6px">✏️ Brain-dump your time — "two hours on work, half an hour emails, one hour exercise"</div>
@@ -1902,11 +1903,13 @@ function renderTimeLedger() {
     const disp = mins>=60?`${Math.floor(mins/60)}h ${mins%60}m`:`${mins}m`;
     // Individual entries for this area today — expandable, editable, deletable
     const rows = state.timeLogs.filter(l => (Array.isArray(l.fields.Area)?l.fields.Area[0]:l.fields.Area)===area)
-      .map(l => `<div class="uday-swap-row" style="padding-left:6px">
-        <div style="flex:1"><span class="uday-task-meta">${l.fields.Minutes||0}m</span> ${esc(l.fields.Note||'')}</div>
+      .map(l => {
+        const win = (l.fields.Start && l.fields.End) ? `${l.fields.Start}–${l.fields.End} · ` : '';
+        return `<div class="uday-swap-row" style="padding-left:6px">
+        <div style="flex:1"><span class="uday-task-meta">${win}${l.fields.Minutes||0}m</span> ${esc(l.fields.Note||'')}</div>
         <button class="uday-swap-btn" onclick="editTimeEntry('${l.id}')">✎</button>
         <button class="task-del" onclick="deleteTimeEntry('${l.id}')">×</button>
-      </div>`).join('');
+      </div>`; }).join('');
     return `<details class="area-bar-row" style="border:none">
       <summary style="list-style:none;cursor:pointer">
         <div class="area-bar-label"><span>${esc(area)} <span class="text-sm text-gray">▸</span></span><span>${disp}</span></div>
@@ -1918,17 +1921,51 @@ function renderTimeLedger() {
 }
 
 // Edit / delete an individual Time Log entry (R7 — see & edit what you logged)
+// Parse "HH:MM" or "8:20"/"8:20am" → minutes from midnight, or null
+function parseHHMM(s) {
+  if (!s) return null;
+  const p = parseMeetingTimeStr(s);   // reuse the flexible time parser
+  return p ? p.startMins : null;
+}
 async function editTimeEntry(id) {
-  const l = (state.weekTimeLogs||state.timeLogs).find(x=>x.id===id) || state.timeLogs.find(x=>x.id===id);
-  const cur = l?.fields.Minutes || 0;
-  const v = prompt('Minutes for this entry:', cur);
-  if (v===null) return;
-  const mins = parseInt(v);
-  if (isNaN(mins) || mins<0) { toast('Enter a number'); return; }
+  const l = (state.weekTimeLogs||[]).find(x=>x.id===id) || state.timeLogs.find(x=>x.id===id);
+  if (!l) return;
+  const start = prompt('Start time (HH:MM, blank to skip):', l.fields.Start||'');
+  if (start === null) return;
+  const end = prompt('End time (HH:MM, blank to skip):', l.fields.End||'');
+  if (end === null) return;
+  const sM = parseHHMM(start), eM = parseHHMM(end);
+  let mins = l.fields.Minutes || 0;
+  const fields = {};
+  if (sM != null && eM != null) {            // window given → derive minutes
+    mins = Math.max(1, eM - sM);
+    fields.Start = start.trim(); fields.End = end.trim();
+  } else if (start.trim() === '' && end.trim() === '') {
+    const v = prompt('Minutes for this entry:', mins); if (v===null) return;
+    const mm = parseInt(v); if (isNaN(mm)||mm<0) { toast('Enter a number'); return; }
+    mins = mm;
+  } else {
+    if (start.trim()) fields.Start = start.trim();
+    if (end.trim()) fields.End = end.trim();
+  }
+  fields.Minutes = mins;
+  try { await AT.updateTimeLog(id, fields); await loadTimeLogs(); toast('Updated ✓'); }
+  catch(e) { toast('Error: '+e.message); }
+}
+// Add time that occurred earlier (R: "add in time that occurred later as well")
+async function addPastTime() {
+  const area = prompt('Area (Work Work, Business, Health & Fitness, Learning, Admin, Rest…):', 'Work Work');
+  if (!area) return;
+  if (!TIMELOG_AREAS.includes(area.trim())) { toast('Unknown area'); return; }
+  const start = prompt('Start time (e.g. 8:20):', ''); if (start===null) return;
+  const end = prompt('End time (e.g. 8:44):', ''); if (end===null) return;
+  const note = prompt('Note (optional):', '') || '';
+  const sM = parseHHMM(start), eM = parseHHMM(end);
+  if (sM==null || eM==null || eM<=sM) { toast('Enter a valid start and end'); return; }
   try {
-    await AT.updateTimeLog(id, { Minutes: mins });
-    await loadTimeLogs();
-    toast('Updated ✓');
+    await AT.logTime({ Date: state.dayKey, Area: area.trim(), Minutes: eM-sM, Note: note.trim(), Start: start.trim(), End: end.trim() });
+    await loadTimeLogs(); renderWorkBar();
+    toast(`Logged ${eM-sM}m · ${area.trim()}`);
   } catch(e) { toast('Error: '+e.message); }
 }
 async function deleteTimeEntry(id) {
@@ -1948,16 +1985,20 @@ function startTimer(chipIdx) {
   localStorage.setItem('kat-timer', JSON.stringify(state.timer));
   renderTimerBanner();
 }
+function hhmm(ts) { const d = new Date(ts); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 function stopTimer() {
   if (!state.timer) return;
-  const mins = Math.round((Date.now()-state.timer.startTs)/60000);
+  const startTs = state.timer.startTs, endTs = Date.now();
+  const mins = Math.round((endTs-startTs)/60000);
   const {area, label, note} = state.timer;
   clearTimerState();
   renderTimerBanner(); // hide banner immediately
   renderUnifiedSchedule(); // clear running state on ▶ button
   if (mins < 1) { toast('Timer under 1 min — not logged'); return; }
-  const fields = {Date: state.dayKey, Area: area, Minutes:mins, Note: note || label.replace(/^[^A-Za-z]+/,'')};
-  AT.logTime(fields).then(()=>{ loadTimeLogs(); renderWorkBar(); toast(`Logged ${mins}m · ${area}`); })
+  // Record WHEN the time occurred (start–end) so it can be reviewed/adjusted
+  const fields = {Date: state.dayKey, Area: area, Minutes:mins, Note: note || label.replace(/^[^A-Za-z]+/,''),
+    Start: hhmm(startTs), End: hhmm(endTs)};
+  AT.logTime(fields).then(()=>{ loadTimeLogs(); renderWorkBar(); toast(`Logged ${mins}m · ${area} (${hhmm(startTs)}–${hhmm(endTs)})`); })
     .catch(e=>toast('Error logging time: '+e.message));
 }
 function cancelTimer() { clearTimerState(); renderTimerBanner(); renderUnifiedSchedule(); toast('Timer cancelled'); }
