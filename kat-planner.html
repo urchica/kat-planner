@@ -3878,12 +3878,21 @@ function renderUnifiedSchedule(targetDate) {
       const fillMins = blk._fillMins || 0;
       const fillStr = fillMins > 0 ? `${fh(fillMins)} of ${fh(blk.durationMins)} queued` : '';
 
+      // R22: block-level timer for this section's area (start working on the block as a whole)
+      const BLOCK_AREA = { 'biz-morning':'Business', 'work-deep':'Work Work', 'exercise':'Health & Fitness', 'afternoon':'Work Work' };
+      const blkArea = BLOCK_AREA[blk.id];
+      const blkRunning = isToday && state.timer && state.timer.label === blk.label;
+      const blkTimerBtn = (isToday && blkArea)
+        ? `<button class="uday-start${blkRunning?' running':''}" title="Start a timer for this block" onclick="startTaskTimer('${blkArea}','${blk.label.replace(/'/g,"\\'")}')">▶</button>`
+        : '';
+
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
         <div class="uday-blk-hdr">
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
           ${fillStr?`<span style="margin-left:auto;font-size:10px;color:var(--gray)">${fillStr}</span>`:''}
+          ${blkTimerBtn}
         </div>
         ${tasksHtml}
         ${calHtmlFor(blk)}
