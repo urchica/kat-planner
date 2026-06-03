@@ -818,6 +818,14 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
       </div>
 
       <div class="card">
+        <div class="card-header">
+          <span class="card-title"><span class="dot" style="background:var(--purple)"></span>All sprints by goal</span>
+          <button class="btn btn-ghost btn-sm" onclick="renderSprintsOverview(true)">↻ Load</button>
+        </div>
+        <div class="card-body" id="sprints-overview-body"><p class="text-sm text-gray">Tap ↻ Load to see every goal → sprint → tasks.</p></div>
+      </div>
+
+      <div class="card">
         <div class="card-header"><span class="card-title"><span class="dot" style="background:var(--amber)"></span>Capacity check</span></div>
         <div class="card-body" id="sprint-cap-sprint-body"><p class="text-sm text-gray">Loading…</p></div>
       </div>
@@ -1344,6 +1352,14 @@ const AT = {
   async getAllSprintProjects() {
     const r = await this.call('GET','Sprint%20Projects?pageSize=100');
     return r.records||[];
+  },
+  async getAllSprintTasks() {
+    const all = []; let offset = null;
+    do {
+      const r = await this.call('GET','Sprint%20Tasks?pageSize=100&sort[0][field]=Sprint'+(offset?`&offset=${offset}`:''));
+      all.push(...(r.records||[])); offset = r.offset;
+    } while (offset);
+    return all;
   },
   async getSprintTasks(num) {
     const r = await this.call('GET',`Sprint%20Tasks?filterByFormula=${encodeURIComponent(`{Sprint}=${num}`)}&sort[0][field]=Owner`);
@@ -2323,7 +2339,8 @@ function currentSprintNum() {
 
 // Convert a Sprint Tasks record into the shape that the task pipeline expects.
 // projectId → goal name, built in loadTasks so tasks can be tagged by goal
-let sprintGoalByProject = {};
+let sprintGoalByProject = {};   // projectId → goal name
+let sprintNameByProject = {};   // projectId → project (sprint-theme) name
 function adaptSprintTask(t) {
   const adapted = { ...t, _isSprint: true, _sprintNum: t.fields.Sprint, fields: { ...t.fields } };
   const hrs = t.fields['Estimated Hours'];
@@ -2331,6 +2348,7 @@ function adaptSprintTask(t) {
   if (t.fields['Due Date']) adapted.fields['Target Date'] = t.fields['Due Date'];
   const projId = (t.fields.Project || [])[0];
   adapted._goal = (projId && sprintGoalByProject[projId]) || '';
+  adapted._project = (projId && sprintNameByProject[projId]) || '';
   return adapted;
 }
 
@@ -2358,10 +2376,13 @@ async function loadTasks() {
       AT.getAllSprintProjects().catch(()=>[]),
       AT.getSprintGoals().catch(()=>[])
     ]);
-    // Build projectId → goal-name map so each sprint task can be tagged by goal
+    // Build projectId → goal-name and projectId → project-name maps for tagging
     const goalName = {}; goals.forEach(g => goalName[g.id] = g.fields.Name || '');
-    sprintGoalByProject = {};
-    projects.forEach(p => { sprintGoalByProject[p.id] = goalName[(p.fields.Goal||[])[0]] || p.fields.Name || ''; });
+    sprintGoalByProject = {}; sprintNameByProject = {};
+    projects.forEach(p => {
+      sprintGoalByProject[p.id] = goalName[(p.fields.Goal||[])[0]] || p.fields.Name || '';
+      sprintNameByProject[p.id] = p.fields.Name || '';
+    });
     const katSprint = sprintTasks.filter(t=>(t.fields.Owner||[]).includes('Kat'));
     state.tasks = [...normalTasks, ...katSprint.map(adaptSprintTask)];
     refreshPredictions();
@@ -2563,6 +2584,7 @@ function renderTaskRow(t, ctx) {
       <div class="task-meta">
         ${isSprint?`<span class="task-pill" style="background:${t._sprintNum===currentSprintNum()?'var(--teal)':'var(--gray-mid)'};color:white;font-size:10px">🎯 S${t._sprintNum||'?'}${t._sprintNum===currentSprintNum()?' · now':''}</span>`:''}
         ${isSprint&&t._goal?`<span class="task-pill" style="background:var(--purple-light,#EEEDFE);color:#3C3489;font-size:10px">${esc(t._goal)}</span>`:''}
+        ${isSprint&&t._project&&t._project!==t._goal?`<span class="task-pill" style="background:#EAF6F2;color:var(--teal-dark);font-size:10px">${esc(t._project)}</span>`:''}
         ${areas?`<span class="task-pill tp-area">${esc(areas)}</span>`:''}
         ${q?`<span class="task-pill ${qcls}">${PRIO_LABEL[q]||q.split(' ')[0]}</span>`:''}
         ${minsDisplay?`<span class="task-pill tp-time">⏱ ${minsDisplay}</span>`:''}
@@ -4168,6 +4190,53 @@ function renderSprintTab() {
   renderSprintReviewForm();
   populateDropdowns();
   updateCapacityCards();
+}
+
+// R6: collapsible overview of every goal → sprint → tasks (incl. future sprints)
+async function renderSprintsOverview(force) {
+  const el = document.getElementById('sprints-overview-body');
+  if (!el) return;
+  el.innerHTML = '<p class="text-sm text-gray">Loading all sprints…</p>';
+  try {
+    const [tasks, projects, goals] = await Promise.all([
+      AT.getAllSprintTasks(), AT.getAllSprintProjects(), AT.getSprintGoals()
+    ]);
+    const goalName = {}; goals.forEach(g => goalName[g.id] = g.fields.Name || '(goal)');
+    const projGoal = {}, projName = {};
+    projects.forEach(p => { projGoal[p.id] = goalName[(p.fields.Goal||[])[0]] || p.fields.Name || '(goal)'; projName[p.id] = p.fields.Name || ''; });
+    const curNum = currentSprintNum();
+    // group: goal → sprintNum → [tasks]
+    const tree = {};
+    tasks.forEach(t => {
+      const pid = (t.fields.Project||[])[0];
+      const g = (pid && projGoal[pid]) || '(unassigned)';
+      const sN = t.fields.Sprint || 0;
+      tree[g] = tree[g] || {};
+      (tree[g][sN] = tree[g][sN] || { theme: (pid&&projName[pid])||'', tasks: [] }).tasks.push(t);
+    });
+    const statusMark = s => s==='Done' ? '✓' : s==='In Progress' ? '◐' : '○';
+    let html = '';
+    Object.keys(tree).sort().forEach(g => {
+      const sprints = tree[g];
+      const totalT = Object.values(sprints).reduce((s,o)=>s+o.tasks.length,0);
+      const doneT = Object.values(sprints).reduce((s,o)=>s+o.tasks.filter(t=>t.fields.Status==='Done').length,0);
+      let inner = '';
+      Object.keys(sprints).map(Number).sort((a,b)=>a-b).forEach(sN => {
+        const o = sprints[sN];
+        const isCur = sN === curNum;
+        const rows = o.tasks.map(t => {
+          const owners = (t.fields.Owner||[]).join('/');
+          const hrs = t.fields['Estimated Hours'] ? ` · ${t.fields['Estimated Hours']}h` : '';
+          return `<div class="uday-swap-row" style="padding-left:10px">
+            <span style="flex:1">${statusMark(t.fields.Status)} ${esc(t.fields.Name||'')}<span class="uday-task-meta"> ${owners}${hrs}</span></span>
+          </div>`;
+        }).join('');
+        inner += `<details${isCur?' open':''} style="margin-left:10px"><summary class="uday-more" style="font-weight:600">Sprint ${sN}${o.theme?' · '+esc(o.theme):''}${isCur?' · now':''} (${o.tasks.length})</summary>${rows}</details>`;
+      });
+      html += `<details class="uday-more-wrap"><summary class="uday-more" style="font-size:13px;font-weight:700;color:var(--purple)">${esc(g)} — ${doneT}/${totalT} done</summary>${inner}</details>`;
+    });
+    el.innerHTML = html || '<p class="text-sm text-gray">No sprint tasks found.</p>';
+  } catch(e) { el.innerHTML = `<p class="text-sm text-gray" style="color:var(--red)">${esc(e.message)}</p>`; }
 }
 
 function renderSprintHeaderHTML() {
