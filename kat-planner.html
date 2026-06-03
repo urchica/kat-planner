@@ -307,6 +307,10 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
 .uday-swap-row{display:flex;align-items:center;gap:8px;padding:4px 6px 4px 14px;border-top:1px dashed var(--gray-light)}
 .uday-swap-btn{font-size:10px;font-weight:700;color:var(--teal);background:var(--teal-light);border:none;border-radius:5px;padding:3px 8px;cursor:pointer;flex-shrink:0}
 .uday-swap-btn:active{opacity:.7}
+.uday-adj{font-size:11px;color:var(--gray);background:none;border:none;cursor:pointer;padding:0 4px}
+.uday-adj:hover{color:var(--teal)}
+.uday-addhere{font-size:11px;color:var(--teal);background:none;border:1px dashed var(--gray-light);border-radius:6px;cursor:pointer;padding:4px 8px;margin-top:4px;width:100%}
+.uday-addhere:hover{background:var(--bg)}
 </style>
 </head>
 <body>
@@ -3515,6 +3519,48 @@ function saveDayStructure(obj) {
   localStorage.setItem('kat-day-struct', JSON.stringify(obj));
 }
 
+// R15: per-day manual block adjustments — duration overrides {blockId: mins}
+// and task pins {taskId: blockId}, so you can reshape a specific day.
+function loadBlockOverrides(dateStr) {
+  try { return JSON.parse(localStorage.getItem('kat-blocks-'+dateStr) || '{}'); } catch(e) { return {}; }
+}
+function saveBlockOverrides(dateStr, obj) { localStorage.setItem('kat-blocks-'+dateStr, JSON.stringify(obj)); }
+function setBlockDuration(dateStr, blockId, mins) {
+  const o = loadBlockOverrides(dateStr); o.dur = o.dur || {};
+  if (mins == null) delete o.dur[blockId]; else o.dur[blockId] = mins;
+  saveBlockOverrides(dateStr, o);
+}
+function pinTaskToBlock(dateStr, taskId, blockId) {
+  const o = loadBlockOverrides(dateStr); o.pins = o.pins || {};
+  if (!blockId) delete o.pins[taskId]; else o.pins[taskId] = blockId;
+  saveBlockOverrides(dateStr, o);
+}
+function adjustBlock(blockId, label, curMins) {
+  const v = prompt(`Minutes for "${label}" today:`, curMins);
+  if (v === null) return;
+  const m = parseInt(v);
+  if (isNaN(m) || m < 0) { toast('Enter a number'); return; }
+  setBlockDuration(state.dayKey, blockId, m);
+  renderUnifiedSchedule();
+  toast(`${label} set to ${fmtMins(m)} for today`);
+}
+const BLOCK_TASK_AREA = { 'biz-morning':'Business', 'work-deep':'Work Work', 'exercise':'Health & Fitness', 'afternoon':'Work Work' };
+async function addTaskToBlock(blockId) {
+  const name = prompt('Task to add to this block:');
+  if (!name || !name.trim()) return;
+  const minsStr = prompt('Estimated minutes (optional):', '30');
+  const fields = { Name:name.trim(), Status:'Todo', 'Date Added':state.dayKey, Priority:'Q2 Schedule', Person:'Kat' };
+  const area = BLOCK_TASK_AREA[blockId]; if (area) fields.Area = [area];
+  const m = parseInt(minsStr); if (!isNaN(m) && m>0) fields['Estimated Minutes'] = m;
+  try {
+    const r = await AT.createTask(fields);
+    state.tasks.unshift(r.records[0]);
+    pinTaskToBlock(state.dayKey, r.records[0].id, blockId);  // keep it in this block
+    renderTodayTasks(); renderAllTasks(); renderWorkBar();
+    toast('Added to this block ✓');
+  } catch(e) { toast('Error: '+e.message); }
+}
+
 // ─── Unified Day Schedule ──────────────────────────────────────
 function buildTodayBlocks(targetDate) {
   const ds = loadDayStructure();
@@ -3534,15 +3580,18 @@ function buildTodayBlocks(targetDate) {
   const wrapEndMins = timeToMins(day.wrapEnd || '17:30');
   const blocks = [];
 
+  // R15: per-day manual duration overrides (ov[blockId] wins over the default)
+  const ov = (loadBlockOverrides(dateStr).dur) || {};
+  const pins = (loadBlockOverrides(dateStr).pins) || {};
   const totalEmailMins   = day.emailMins ?? 60;
-  const emailMorningMins  = Math.min(ds.emailMorningMin || 30, totalEmailMins);
-  const emailAfternoonMins = Math.max(0, totalEmailMins - emailMorningMins);
+  const emailMorningMins  = ov['email-morning'] ?? Math.min(ds.emailMorningMin || 30, totalEmailMins);
+  const emailAfternoonMins = ov['email-afternoon'] ?? Math.max(0, totalEmailMins - emailMorningMins);
   const exerciseFloor = timeToMins(ds.exerciseEarliest || '11:00');
   const deepWorkMins  = Math.round((ds.workDeepHours || 2) * 60);
-  const bizMins = Math.round(ds.bizMorningHours * 60);
-  const exerciseMins = Math.round((day.exercise || 0) * 60);
-  const breakfastMins = ds.breakfastMins || 0;
-  const closedownMins = ds.bufferMins || 0;
+  const bizMins = ov['biz-morning'] ?? Math.round(ds.bizMorningHours * 60);
+  const exerciseMins = ov['exercise'] ?? Math.round((day.exercise || 0) * 60);
+  const breakfastMins = ov['breakfast'] ?? (ds.breakfastMins || 0);
+  const closedownMins = ov['closedown'] ?? (ds.bufferMins || 0);
   const available = wrapEndMins - dayStart;
 
   // ── Meetings are FIXED reservations; every other block flows around them ──
@@ -3573,7 +3622,7 @@ function buildTodayBlocks(targetDate) {
   // ── WORK ENVELOPE: `day.work` hours that INCLUDES email + meetings + work
   // tasks + wrap-up. Business / Exercise / Lunch / Breakfast are separate. ──
   let workEnvelope = Math.round((day.work || 0) * 60);
-  let lunchMins = ds.lunchLearnMins || 0;
+  let lunchMins = ov['lunch-learn'] ?? (ds.lunchLearnMins || 0);
   // Compression when the day can't fit by wrap: 1) trim Work by up to 1h,
   // 2) trim Lunch toward a 15m minimum. Exercise stays fixed.
   const compression = [];
@@ -3585,10 +3634,10 @@ function buildTodayBlocks(targetDate) {
     if (over > 0) compression.push(`still ${fmtMins(over)} over — runs past wrap`);
   }
 
-  // Work TASK time = envelope − email − close-down − meetings
+  // Work TASK time = envelope − email − close-down − meetings (manual overrides win)
   const workTaskMins = Math.max(0, workEnvelope - emailMorningMins - emailAfternoonMins - closedownMins - meetingMins);
-  const deepWorkDur  = Math.min(deepWorkMins, workTaskMins);
-  const afternoonDur = Math.max(0, workTaskMins - deepWorkDur);
+  const deepWorkDur  = ov['work-deep'] ?? Math.min(deepWorkMins, workTaskMins);
+  const afternoonDur = ov['afternoon'] ?? Math.max(0, workTaskMins - deepWorkDur);
 
   // reserve(dur): next meeting-free slot of length `dur` at/after the cursor.
   let cursor = dayStart;
@@ -3678,6 +3727,15 @@ function buildTodayBlocks(targetDate) {
   const isDeep = t => t.fields['Deep Work'] === true;
   const sortedTasks = todayTasks.slice().sort((a,b) => (isDeep(b)?1:0) - (isDeep(a)?1:0) || prioSort(a,b));
   const assignedTaskIds = new Set();
+  const blockById = {}; workBlocks.forEach(b => blockById[b.id] = b);
+  // R15: manually pinned tasks go to their chosen block first (override auto-placement)
+  sortedTasks.forEach(t => {
+    const pin = pins[t.id]; const b = pin && blockById[pin];
+    if (!b || assignedTaskIds.has(t.id)) return;
+    const m = t.fields['Estimated Minutes'] || DEFAULT_TASK_MINS;
+    b.tasks.push(t); b._used += m; assignedTaskIds.add(t.id);
+    if (b._isWorkArea) workTaskBudget -= m;
+  });
   for (const t of sortedTasks) {
     if (assignedTaskIds.has(t.id)) continue;
     const a = Array.isArray(t.fields.Area) ? t.fields.Area[0] : (t.fields.Area || '');
@@ -3780,6 +3838,7 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+          ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button>`:''}
         </div>
         ${blk.nudge ? `<div class="uday-nudge" style="color:${blk.color}">${esc(blk.nudge)}</div>` : ''}
         ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" id="lunch-note-${dateStr}" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-${dateStr}',this.value)">${noteVal}</textarea>
@@ -3799,6 +3858,7 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+          ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button>`:''}
           ${startBtn}
         </div>
         <div class="uday-nudge" style="color:${blk.color};padding-left:0">${esc(blk.nudge)}</div>
@@ -3813,6 +3873,7 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:var(--coral)">💭 Close-down</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+          ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','Close-down',${blk.durationMins})">✎</button>`:''}
         </div>
         <div class="uday-nudge" style="color:var(--coral)">${esc(blk.nudge)}</div>
         ${calHtmlFor(blk)}
@@ -3886,16 +3947,20 @@ function renderUnifiedSchedule(targetDate) {
         ? `<button class="uday-start${blkRunning?' running':''}" title="Start a timer for this block" onclick="startTaskTimer('${blkArea}','${blk.label.replace(/'/g,"\\'")}')">▶</button>`
         : '';
 
+      const adjBtn = isToday ? `<button class="uday-adj" title="Adjust this block's length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button>` : '';
+      const addBtn = isToday ? `<button class="uday-addhere" onclick="addTaskToBlock('${blk.id}')">＋ add task to this block</button>` : '';
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
         <div class="uday-blk-hdr">
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
+          ${adjBtn}
           ${fillStr?`<span style="margin-left:auto;font-size:10px;color:var(--gray)">${fillStr}</span>`:''}
           ${blkTimerBtn}
         </div>
         ${tasksHtml}
         ${calHtmlFor(blk)}
+        ${addBtn}
       </div>`;
     }
   }
