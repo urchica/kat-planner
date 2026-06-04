@@ -396,7 +396,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <div class="add-task-fields" id="day-task-fields">
             <select class="field-select" id="day-task-area">
               <option value="">Area...</option>
-              <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option><option>Admin</option>
+              <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option><option>Learning</option><option>Creative</option><option>Rest</option><option>Relationships</option><option>Admin</option>
             </select>
             <select class="field-select" id="day-task-priority">
               <option value="Q2 Schedule">High Priority</option>
@@ -534,6 +534,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <select class="field-select" id="filter-area" onchange="renderAllTasks()">
               <option value="">All areas</option>
               <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
+              <option>Learning</option><option>Creative</option><option>Rest</option><option>Relationships</option>
               <option>Admin</option>
             </select>
             <select class="field-select" id="filter-goal" onchange="renderAllTasks()">
@@ -572,8 +573,8 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <span class="text-sm text-gray" id="all-task-count"></span>
         </div>
         <div class="card-body">
-          <div id="all-tasks-list"></div>
-          <div class="add-task-bar mt8">
+          <!-- R31: add-task moved to the top -->
+          <div class="add-task-bar">
             <textarea class="add-task-input" id="all-task-input" rows="1" placeholder="Add a task..." oninput="autoResize(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addTaskFromAll()}"></textarea>
             <button class="icon-btn" id="voice-btn-all" onclick="toggleVoice('all-task-input','voice-btn-all')">🎤</button>
             <button class="icon-btn" onclick="addTaskFromAll()">＋</button>
@@ -581,6 +582,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
           <div class="add-task-fields" id="all-task-fields">
             <select class="field-select" id="all-task-area"><option value="">Area...</option>
               <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
+              <option>Learning</option><option>Creative</option><option>Rest</option><option>Relationships</option>
               <option>Admin</option>
             </select>
             <select class="field-select" id="all-task-priority">
@@ -593,7 +595,8 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
             <input class="field-num form-input" id="all-task-date" type="date" style="width:130px;flex:none"/>
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="all-task-deep"/>⚡ Deep</label>
           </div>
-          <button class="text-sm text-gray" style="background:none;border:none;cursor:pointer;margin-top:4px" onclick="toggleAllFields()">⋯ more options</button>
+          <button class="text-sm text-gray" style="background:none;border:none;cursor:pointer;margin:4px 0 10px" onclick="toggleAllFields()">⋯ more options</button>
+          <div id="all-tasks-list"></div>
         </div>
       </div>
     </div><!-- end tasks panel -->
@@ -1107,6 +1110,7 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         <select id="edit-task-area" class="form-select" style="width:100%;margin-top:4px">
           <option value="">— none —</option>
           <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
+          <option>Learning</option><option>Creative</option><option>Rest</option><option>Relationships</option>
           <option>Admin</option>
         </select>
       </div>
@@ -2060,13 +2064,20 @@ function tickTimer() {
 function restoreTimer() {
   const saved = localStorage.getItem('kat-timer');
   if (saved) { try { state.timer = JSON.parse(saved); renderTimerBanner(); } catch(e){} }
-  // Cross-device (R8): if a timer is running per Airtable, adopt it so this
-  // device shows it and can stop it.
+  // Cross-device (R8/R26): the Airtable record is the source of truth.
+  // Adopt a running timer if present; if it's gone, clear any stale local timer
+  // (so a timer stopped on another device clears here on refresh too).
   AT.getActiveTimer().then(rec => {
-    if (!rec || !rec.fields.StartTs) return;
-    state.timer = { area: rec.fields.Area||'', label: rec.fields.Label||'',
-      note: rec.fields.Note||'', startTs: rec.fields.StartTs };
-    localStorage.setItem('kat-timer', JSON.stringify(state.timer));
+    if (rec && rec.fields.StartTs) {
+      state.timer = { area: rec.fields.Area||'', label: rec.fields.Label||'',
+        note: rec.fields.Note||'', startTs: rec.fields.StartTs };
+      localStorage.setItem('kat-timer', JSON.stringify(state.timer));
+    } else if (state.timer) {
+      // No active timer remotely → it was stopped elsewhere; clear locally
+      state.timer = null;
+      localStorage.removeItem('kat-timer');
+      if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval = null; }
+    }
     renderTimerBanner();
     if (typeof renderUnifiedSchedule==='function') renderUnifiedSchedule();
   }).catch(()=>{});
@@ -2593,6 +2604,7 @@ function renderTaskRow(t, ctx) {
         ${stale&&!done?`<span class="task-pill tp-stale">${daysOld}d old</span>`:''}
       </div>
     </div>
+    ${!done ? `<button class="uday-start${state.timer&&state.timer.label===(f.Name||'')?' running':''}" title="Start a timer for this task" onclick="event.stopPropagation();startTaskTimer('${(areas||'').split(',')[0].trim()}','${(f.Name||'').replace(/'/g,"\\'")}')">▶</button>` : ''}
     ${isSprint?'':`<button class="task-del" onclick="deleteTask('${t.id}')">×</button>`}
   </div>`;
 }
@@ -2641,7 +2653,8 @@ function toggleTaskDone(id, done) {
       timerElapsed = Math.max(1, Math.round((Date.now() - state.timer.startTs)/60000));
     }
     const tracked = alreadyMins + timerElapsed;
-    const prefill = tracked > 0 ? tracked : (t?.fields['Estimated Minutes'] || '');
+    // R23: don't pre-fill the estimate — only tracked time. Blank = log no time.
+    const prefill = tracked > 0 ? tracked : '';
     const hint = document.getElementById('done-modal-hint');
     if (hint) {
       if (tracked > 0) {
@@ -2650,7 +2663,10 @@ function toggleTaskDone(id, done) {
         if (timerElapsed > 0) parts.push(`${timerElapsed}m on the running timer`);
         hint.textContent = `⏱ ${parts.join(' + ')} — this is the total tracked; adjust if needed.`;
         hint.style.display = 'block';
-      } else { hint.style.display = 'none'; }
+      } else {
+        hint.textContent = 'Leave blank to mark done without logging time.';
+        hint.style.display = 'block';
+      }
     }
     document.getElementById('done-actual-mins').value = prefill;
     document.getElementById('done-modal').style.display = 'flex';
@@ -2860,7 +2876,8 @@ async function applyTaskDone(id, done, actualMins) {
         const taskNote = 'Task: '+(t.fields.Name||'');
         const alreadyMins = (state.timeLogs||[]).filter(l => l.fields.Note === taskNote)
           .reduce((s,l) => s + (l.fields.Minutes||0), 0);
-        const targetTotal = actualMins || t.fields['Estimated Minutes'] || 0;
+        // R23: only log time that was actually noted (no estimate fallback)
+        const targetTotal = actualMins || 0;
         const toAdd = targetTotal - alreadyMins;
         const area = Array.isArray(t.fields.Area) ? t.fields.Area[0] : t.fields.Area;
         if (toAdd > 0 && area && TIMELOG_AREAS.includes(area)) {
@@ -4032,8 +4049,8 @@ function renderUnifiedSchedule(targetDate) {
               <span class="uday-task-name">${esc(f.Name||'')}</span>
               <span class="uday-task-meta"> ${ms}${ta?' · '+ta:''}</span>
             </div>
-            <button class="uday-swap-btn" title="Bump to top (Q1) so it schedules into this block"
-              onclick="event.stopPropagation();bumpTaskPriority('${t.id}')">↑ swap in</button>
+            <button class="uday-swap-btn" title="Pin this task into this block"
+              onclick="event.stopPropagation();swapTaskIntoBlock('${t.id}','${blk.id}')">↑ swap in</button>
           </div>`;
         }).join('');
         tasksHtml += `<details class="uday-more-wrap"><summary class="uday-more">+ ${blk._extraTasks} more in backlog — tap to swap</summary>${swapRows}</details>`;
@@ -4122,6 +4139,13 @@ async function bumpTaskPriority(id) {
     else await AT.updateTask(id, { Priority: 'Q1 Do Now' });
     toast('Swapped in ↑');
   } catch(e) { toast('Error: ' + e.message); }
+}
+
+// R28: actually pin the task into the chosen block so it shows there
+function swapTaskIntoBlock(taskId, blockId) {
+  pinTaskToBlock(state.dayKey, taskId, blockId);
+  renderUnifiedSchedule();
+  toast('Swapped into this block ✓');
 }
 
 function rescheduleDay() {
