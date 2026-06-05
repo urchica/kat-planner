@@ -3673,6 +3673,22 @@ function setBlockDuration(dateStr, blockId, mins) {
   if (mins == null) delete o.dur[blockId]; else o.dur[blockId] = mins;
   saveBlockOverrides(dateStr, o);
 }
+function setBlockStart(dateStr, blockId, mins) {
+  const o = loadBlockOverrides(dateStr); o.start = o.start || {};
+  if (mins == null) delete o.start[blockId]; else o.start[blockId] = mins;
+  saveBlockOverrides(dateStr, o);
+}
+function moveBlockTime(blockId, label, curStart) {
+  const cur = minsToTime(curStart);
+  const v = prompt(`New start time for "${label}" (e.g. 9:15am):`, cur);
+  if (v == null) return;
+  if (v.trim() === '') { setBlockStart(state.dayKey, blockId, null); renderUnifiedSchedule(); toast('Start time reset'); return; }
+  const p = parseMeetingTimeStr(v);
+  if (!p) { toast('Enter a time like 9:15am'); return; }
+  setBlockStart(state.dayKey, blockId, p.startMins);
+  renderUnifiedSchedule();
+  toast(`${label} moved to ${minsToTime(p.startMins)}`);
+}
 function pinTaskToBlock(dateStr, taskId, blockId) {
   const o = loadBlockOverrides(dateStr); o.pins = o.pins || {};
   if (!blockId) delete o.pins[taskId]; else o.pins[taskId] = blockId;
@@ -3795,7 +3811,12 @@ function buildTodayBlocks(targetDate) {
     cursor = start + dur;
     return start;
   }
-  const add = (o) => { o.startMins = reserve(o.durationMins); blocks.push(o); };
+  const ovStart = (loadBlockOverrides(dateStr).start) || {};   // R25 per-block start-time overrides
+  const add = (o) => {
+    if (ovStart[o.id] != null) cursor = Math.max(cursor, ovStart[o.id]); // move block to its chosen time
+    o.startMins = reserve(o.durationMins);
+    blocks.push(o);
+  };
 
   // 1. Business deep work (separate from the work envelope)
   if (bizMins > 0) add({ id:'biz-morning', type:'work-block', label:'Business — deep work', icon:'🐕',
@@ -3981,7 +4002,7 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
-          ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button>`:''}
+          ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button><button class="uday-adj" title="Move to a different time" onclick="moveBlockTime('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.startMins})">🕐</button>`:''}
           ${isToday?`<button class="uday-start${state.timer&&state.timer.label===blk.label?' running':''}" style="margin-left:auto" title="Start this block" onclick="startTaskTimer('${blk.id==='lunch-learn'?'Learning':'Rest'}','${blk.label.replace(/'/g,"\\'")}')">▶</button>`:''}
         </div>
         ${blk.nudge ? `<div class="uday-nudge" style="color:${blk.color}">${esc(blk.nudge)}</div>` : ''}
@@ -4002,7 +4023,7 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-time">${minsToTime(blk.startMins)}</span>
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
-          ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button>`:''}
+          ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button><button class="uday-adj" title="Move to a different time" onclick="moveBlockTime('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.startMins})">🕐</button>`:''}
           ${startBtn}
         </div>
         <div class="uday-nudge" style="color:${blk.color};padding-left:0">${esc(blk.nudge)}</div>
@@ -4092,7 +4113,7 @@ function renderUnifiedSchedule(targetDate) {
         ? `<button class="uday-start${blkRunning?' running':''}" title="Start a timer for this block" onclick="startTaskTimer('${blkArea}','${blk.label.replace(/'/g,"\\'")}')">▶</button>`
         : '';
 
-      const adjBtn = isToday ? `<button class="uday-adj" title="Adjust this block's length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button>` : '';
+      const adjBtn = isToday ? `<button class="uday-adj" title="Adjust this block's length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button><button class="uday-adj" title="Move this block to a different time" onclick="moveBlockTime('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.startMins})">🕐</button>` : '';
       const addBtn = isToday ? `<button class="uday-addhere" onclick="addTaskToBlock('${blk.id}')">＋ add task to this block</button>` : '';
       html += `<div class="uday-blk" style="border-left-color:${blk.color}">
         <div class="uday-blk-hdr">
