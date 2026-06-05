@@ -1154,6 +1154,38 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
   </div>
 </div>
 
+<!-- Add-to-block modal (R29) -->
+<div class="modal-bg" id="addblock-modal" style="display:none" onclick="if(event.target===this)closeAddBlock()">
+  <div class="modal" style="max-height:90vh;overflow-y:auto">
+    <div class="modal-title" id="addblock-title">Add to block</div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--gray);font-weight:600">Pick an existing task</label>
+      <select id="addblock-existing" class="form-select" style="width:100%;margin-top:4px"><option value="">— choose a backlog task —</option></select>
+    </div>
+    <div style="text-align:center;color:var(--gray);font-size:12px;margin:6px 0">— or add a new task —</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <input type="text" id="addblock-name" class="field-input" placeholder="Task name…" style="width:100%"/>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="addblock-area" class="form-select" style="flex:1;min-width:120px">
+          <option>Work Work</option><option>Business</option><option>Health &amp; Fitness</option>
+          <option>Learning</option><option>Creative</option><option>Rest</option><option>Relationships</option><option>Admin</option>
+        </select>
+        <select id="addblock-priority" class="form-select" style="flex:1;min-width:120px">
+          <option value="Q2 Schedule">High Priority</option><option value="Q1 Do Now">Top Priority</option>
+          <option value="Q3 Delegate">Medium Priority</option><option value="Q4 Drop">Low Priority</option>
+        </select>
+        <input type="number" id="addblock-mins" class="field-num" placeholder="Min" min="5" step="5" style="width:70px"/>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="addblock-deep"/>⚡ Deep</label>
+      </div>
+      <textarea id="addblock-notes" class="refl-textarea" placeholder="Notes (optional)…" style="width:100%;min-height:48px"></textarea>
+    </div>
+    <div class="flex gap8" style="margin-top:14px">
+      <button class="btn btn-primary" style="flex:1" onclick="confirmAddBlock()">Add to block</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="closeAddBlock()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Page voice overlay -->
 <div id="page-voice-overlay" style="display:none;position:fixed;bottom:132px;left:50%;transform:translateX(-50%);width:calc(100% - 32px);max-width:568px;background:var(--white);border:1px solid var(--border);border-radius:12px;padding:12px 14px;box-shadow:0 4px 20px rgba(0,0,0,.2);z-index:150">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
@@ -3704,18 +3736,66 @@ function adjustBlock(blockId, label, curMins) {
   toast(`${label} set to ${fmtMins(m)} for today`);
 }
 const BLOCK_TASK_AREA = { 'biz-morning':'Business', 'work-deep':'Work Work', 'exercise':'Health & Fitness', 'afternoon':'Work Work' };
-async function addTaskToBlock(blockId) {
-  const name = prompt('Task to add to this block:');
-  if (!name || !name.trim()) return;
-  const minsStr = prompt('Estimated minutes (optional):', '30');
-  const fields = { Name:name.trim(), Status:'Todo', 'Date Added':state.dayKey, Priority:'Q2 Schedule', Person:'Kat' };
-  const area = BLOCK_TASK_AREA[blockId]; if (area) fields.Area = [area];
-  const m = parseInt(minsStr); if (!isNaN(m) && m>0) fields['Estimated Minutes'] = m;
+// R29: full-field add-to-block modal — pick an existing backlog task OR enter a
+// new one with all its fields in one window.
+let addBlockCtx = null;
+function addTaskToBlock(blockId) {
+  addBlockCtx = blockId;
+  const area = BLOCK_TASK_AREA[blockId];
+  let blkLabel = 'block';
+  try { blkLabel = (buildTodayBlocks()||[]).find(b=>b.id===blockId)?.label || 'block'; } catch(e){}
+  document.getElementById('addblock-title').textContent = 'Add to ' + blkLabel;
+  // reset new-task fields
+  document.getElementById('addblock-name').value = '';
+  document.getElementById('addblock-mins').value = '';
+  document.getElementById('addblock-notes').value = '';
+  document.getElementById('addblock-deep').checked = false;
+  document.getElementById('addblock-priority').value = 'Q2 Schedule';
+  if (area) document.getElementById('addblock-area').value = area;
+  // populate existing-task picker with open, unscheduled tasks (area first)
+  const sel = document.getElementById('addblock-existing');
+  sel.innerHTML = '<option value="">— choose a backlog task —</option>';
+  const open = (state.tasks||[]).filter(t => (t.fields.Status||'Todo') !== 'Done');
+  open.sort((a,b)=>{
+    const aa=(a.fields.Area||[]).includes(area)?0:1, bb=(b.fields.Area||[]).includes(area)?0:1;
+    if(aa!==bb) return aa-bb;
+    return (a.fields.Name||'').localeCompare(b.fields.Name||'');
+  });
+  open.forEach(t=>{
+    const o=document.createElement('option'); o.value=t.id;
+    const mins=t.fields['Estimated Minutes']; const ar=(t.fields.Area||[])[0]||'';
+    o.textContent = (t.fields['Deep Work']?'⚡ ':'') + (t.fields.Name||'(untitled)') + (mins?` · ${mins}m`:'') + (ar?` · ${ar}`:'');
+    sel.appendChild(o);
+  });
+  document.getElementById('addblock-modal').style.display='flex';
+}
+function closeAddBlock(){ document.getElementById('addblock-modal').style.display='none'; addBlockCtx=null; }
+async function confirmAddBlock() {
+  const blockId = addBlockCtx; if (!blockId) return closeAddBlock();
+  const existingId = document.getElementById('addblock-existing').value;
+  // Path 1 — pin an existing task into this block
+  if (existingId) {
+    pinTaskToBlock(state.dayKey, existingId, blockId);
+    closeAddBlock();
+    renderTodayTasks(); renderAllTasks(); renderWorkBar(); renderUnifiedSchedule();
+    toast('Added to this block ✓');
+    return;
+  }
+  // Path 2 — create a new task with all fields, then pin it
+  const name = document.getElementById('addblock-name').value.trim();
+  if (!name) { toast('Pick an existing task or enter a name'); return; }
+  const fields = { Name:name, Status:'Todo', 'Date Added':state.dayKey, Person:'Kat',
+    Priority: document.getElementById('addblock-priority').value || 'Q2 Schedule' };
+  const area = document.getElementById('addblock-area').value; if (area) fields.Area = [area];
+  const m = parseInt(document.getElementById('addblock-mins').value); if (!isNaN(m) && m>0) fields['Estimated Minutes'] = m;
+  if (document.getElementById('addblock-deep').checked) fields['Deep Work'] = true;
+  const notes = document.getElementById('addblock-notes').value.trim(); if (notes) fields['Notes'] = notes;
   try {
     const r = await AT.createTask(fields);
     state.tasks.unshift(r.records[0]);
-    pinTaskToBlock(state.dayKey, r.records[0].id, blockId);  // keep it in this block
-    renderTodayTasks(); renderAllTasks(); renderWorkBar();
+    pinTaskToBlock(state.dayKey, r.records[0].id, blockId);
+    closeAddBlock();
+    renderTodayTasks(); renderAllTasks(); renderWorkBar(); renderUnifiedSchedule();
     toast('Added to this block ✓');
   } catch(e) { toast('Error: '+e.message); }
 }
