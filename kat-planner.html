@@ -2282,9 +2282,20 @@ const SLIP_REVIEW_DAYS = 7;
 function dayCapacityMins(date, isToday) {
   const day = SCHEDULE.days[DOW_KEYS[date.getDay()]];
   if (!day) return 0; // weekend / no template
-  let base = (isToday ? currentWorkCeiling() : day.work) * 60;
-  if (isToday) base = Math.max(0, base - workLoggedTodayMins());
-  return base;
+  // R24: realistic TASK capacity = work envelope − email − close-down − that
+  // day's meetings (which all count inside the work envelope).
+  const ds = loadDayStructure();
+  const emailTotal = day.emailMins ?? 60;
+  const closedown = ds.bufferMins || 0;
+  const dateStr = localDateStr(date);
+  const meetingMins = getVisibleEventsForDate(dateStr).filter(e => !e.allDay).reduce((s,e) => {
+    const d = new Date(e.start), ed = e.end ? new Date(e.end) : null;
+    return s + (ed ? Math.max(15, Math.round((ed - d)/60000)) : 30);
+  }, 0);
+  const envelope = (isToday ? currentWorkCeiling() : day.work) * 60;
+  let taskCap = Math.max(0, envelope - emailTotal - closedown - meetingMins);
+  if (isToday) taskCap = Math.max(0, taskCap - workLoggedTodayMins());
+  return taskCap;
 }
 function computePredictedDates() {
   const out = {};
