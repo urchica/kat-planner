@@ -1142,6 +1142,10 @@ input.field-num{width:72px;font-size:12px;border:1px solid var(--border);border-
         <input type="checkbox" id="edit-task-deep" style="width:16px;height:16px"/>
         <span>⚡ Deep work — schedule into the morning deep-work blocks first</span>
       </label>
+      <div>
+        <label style="font-size:12px;color:var(--gray);font-weight:600">📝 Notes (where you left off)</label>
+        <textarea id="edit-task-notes" class="refl-textarea" style="width:100%;margin-top:4px;min-height:60px" placeholder="Progress, next step, links…"></textarea>
+      </div>
     </div>
     <div class="flex gap8" style="margin-top:16px">
       <button class="btn btn-primary" style="flex:1" onclick="saveEditTask()">Save</button>
@@ -2601,6 +2605,7 @@ function renderTaskRow(t, ctx) {
         ${minsDisplay?`<span class="task-pill tp-time">⏱ ${minsDisplay}</span>`:''}
         ${deadlinePill}
         ${predPill}
+        ${f['Notes']?`<span class="task-pill" title="${esc(f['Notes'])}">📝</span>`:''}
         ${stale&&!done?`<span class="task-pill tp-stale">${daysOld}d old</span>`:''}
       </div>
     </div>
@@ -2702,6 +2707,7 @@ function openEditTask(id) {
   document.getElementById('edit-task-deadline').value = f['Target Date']||'';
   document.getElementById('edit-task-status').value = f.Status||'Todo';
   document.getElementById('edit-task-deep').checked = f['Deep Work']===true;
+  document.getElementById('edit-task-notes').value = f['Notes']||'';
   document.getElementById('edit-task-modal').style.display='flex';
 }
 function closeEditTask() {
@@ -2722,6 +2728,7 @@ async function saveEditTask() {
   const dl = document.getElementById('edit-task-deadline').value;
   fields['Target Date'] = dl ? dl : null;                    // null clears the deadline
   fields['Deep Work'] = document.getElementById('edit-task-deep').checked;
+  fields['Notes'] = document.getElementById('edit-task-notes').value.trim() || null;
   // Remove only undefined keys (null is intentional — it clears the field)
   Object.keys(fields).forEach(k=>fields[k]===undefined&&delete fields[k]);
   try {
@@ -3964,6 +3971,7 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-label" style="color:${blk.color}">${blk.icon} ${esc(blk.label)}</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
           ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','${blk.label.replace(/'/g,"\\'")}',${blk.durationMins})">✎</button>`:''}
+          ${isToday?`<button class="uday-start${state.timer&&state.timer.label===blk.label?' running':''}" style="margin-left:auto" title="Start this block" onclick="startTaskTimer('${blk.id==='lunch-learn'?'Learning':'Rest'}','${blk.label.replace(/'/g,"\\'")}')">▶</button>`:''}
         </div>
         ${blk.nudge ? `<div class="uday-nudge" style="color:${blk.color}">${esc(blk.nudge)}</div>` : ''}
         ${blk.noteKey === 'lunch-learn' ? `<textarea class="uday-note" id="lunch-note-${dateStr}" placeholder="What are you learning/watching today?" oninput="localStorage.setItem('kat-lunch-${dateStr}',this.value)">${noteVal}</textarea>
@@ -3999,6 +4007,7 @@ function renderUnifiedSchedule(targetDate) {
           <span class="uday-blk-label" style="color:var(--coral)">💭 Close-down</span>
           <span class="uday-blk-dur">${fh(blk.durationMins)}</span>
           ${isToday?`<button class="uday-adj" title="Adjust length" onclick="adjustBlock('${blk.id}','Close-down',${blk.durationMins})">✎</button>`:''}
+          ${isToday?`<button class="uday-start${state.timer&&state.timer.label==='Close-down'?' running':''}" style="margin-left:auto" title="Start wrap-up" onclick="startTaskTimer('Buffer','Close-down')">▶</button>`:''}
         </div>
         <div class="uday-nudge" style="color:var(--coral)">${esc(blk.nudge)}</div>
         ${calHtmlFor(blk)}
